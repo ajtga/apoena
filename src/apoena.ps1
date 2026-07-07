@@ -56,8 +56,9 @@ function Get-ScheduleContext {
 }
 
 function ConvertTo-CsvSafe($text) {
-    if ($null -eq $text) { return "" }
-    return $text -replace '"', '""'
+    if ($null -eq $text) { return '""' }
+    $escaped = $text -replace '"', '""'
+    return "`"$escaped`""
 }
 
 function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context) {
@@ -93,9 +94,9 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $global:blockIndex.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         $global:daySequence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         $duration,
-        "`"$safeAccomplished`"",
-        "`"$safePlanned`"",
-        "`"$safeNotes`"",
+        $safeAccomplished,
+        $safePlanned,
+        $safeNotes,
         $logDur,
         $safeContext
     )
