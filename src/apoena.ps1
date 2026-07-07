@@ -20,7 +20,7 @@ public class Win32 {
 
 # --- Single Instance Guard ---
 $createdNew = $false
-$mutex = New-Object System.Threading.Mutex($true, "Global\ApoenaEyeRestMutex", [ref]$createdNew)
+$global:mutex = New-Object System.Threading.Mutex($true, "Global\ApoenaEyeRestMutex", [ref]$createdNew)
 if (-not $createdNew) {
     [System.Windows.Forms.MessageBox]::Show(
         "Apoena is already running in the system tray.",

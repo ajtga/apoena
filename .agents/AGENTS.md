@@ -64,3 +64,12 @@ runs silently in the system tray.
 - Prefer `[DateTime]::Now` over `Get-Date` inside hot loops for performance.
 - Helper functions are defined before the main loop.
 - Global state uses `$global:` prefix explicitly.
+
+## Terminal Shell (Windows)
+
+- The default shell is **PowerShell 5.1**.
+- Use `;` to chain commands, **not** `&&` (`&&` is only supported in
+  PowerShell 7+).
+- The `#` character starts a comment in PowerShell. When git commit messages
+  or other arguments need a literal `#`, use single-quoted strings or escape
+  with a backtick (`` `# ``).
