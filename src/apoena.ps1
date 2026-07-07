@@ -277,7 +277,7 @@ function Show-ReturnForm($idleMinutes) {
     $form.Controls.Add($txtNotes)
     
     $btn = New-Object System.Windows.Forms.Button
-    $btn.Text = "Log & Resume"
+    $btn.Text = "Log and Resume"
     $btn.Location = New-Object System.Drawing.Point(80, 130)
     $btn.Size = New-Object System.Drawing.Size(120, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
