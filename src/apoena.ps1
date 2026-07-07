@@ -75,8 +75,8 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
     $tzOffset = (Get-Date).ToString("zzz")
     
     # Keep 3 decimal places for millisecond precision
-    $duration = [math]::Round($durationSecs, 3)
-    $logDur = [math]::Round($logDurSecs, 3)
+    $duration = ([math]::Round($durationSecs, 3)).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $logDur = ([math]::Round($logDurSecs, 3)).ToString([System.Globalization.CultureInfo]::InvariantCulture)
 
     $safeCategory = ConvertTo-CsvSafe $eventCategory
     $safeDetail = ConvertTo-CsvSafe $eventDetail
@@ -90,8 +90,8 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $tzOffset,
         $safeCategory,
         $safeDetail,
-        $global:blockIndex,
-        $global:daySequence,
+        $global:blockIndex.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        $global:daySequence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         $duration,
         "`"$safeAccomplished`"",
         "`"$safePlanned`"",
