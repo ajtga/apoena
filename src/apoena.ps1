@@ -146,19 +146,34 @@ function Get-FormattedDuration($seconds) {
     }
 }
 
-# --- Initialization & Crash Detection ---
+# --- Initialization, Crash Detection & Same-Day Restart ---
+$isSameDayRestart = $false
 if (-not (Test-Path $logFile)) {
     "Timestamp,TimezoneOffset,EventCategory,EventDetail,BlockIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext" | Out-File $logFile -Encoding UTF8
 }
 else {
     $lastLine = Get-Content $logFile -Tail 1
     if ($lastLine -match ',') {
-        $lastEvent = ($lastLine -split ',')[2].Trim('"')
+        $parts = $lastLine -split ','
+
+        # Detect same-day restart and restore counters
+        $lastTimestamp = $parts[0]
+        try {
+            $lastDate = [datetime]::ParseExact($lastTimestamp, "yyyy-MM-dd HH:mm:ss", $null).Date
+            if ($lastDate -eq (Get-Date).Date) {
+                $isSameDayRestart = $true
+                $global:blockIndex = [int]$parts[4]
+                $global:daySequence = [int]$parts[5]
+            }
+        } catch { }
+
+        # Crash detection
+        $lastEvent = $parts[2].Trim('"')
         if ($lastEvent -notmatch 'System') {
             # Previous session did not exit cleanly
         }
         else {
-            $lastDetail = ($lastLine -split ',')[3].Trim('"')
+            $lastDetail = $parts[3].Trim('"')
             if ($lastDetail -notmatch 'Exit') {
                 Write-Log "System" "Unexpected Exit" 0 "" "" "Detected on startup" 0 (Get-ScheduleContext)
             }
@@ -167,6 +182,40 @@ else {
 }
 
 # --- UI Forms ---
+function Show-ResumedSessionForm {
+    $formStart = [DateTime]::Now
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Welcome Back"
+    $form.Size = New-Object System.Drawing.Size(380, 200)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = "Apoena was already running today. What happened since it closed?"
+    $lbl.Location = New-Object System.Drawing.Point(10, 10)
+    $lbl.Size = New-Object System.Drawing.Size(340, 35)
+    $form.Controls.Add($lbl)
+
+    $txtContext = New-Object System.Windows.Forms.TextBox
+    $txtContext.Location = New-Object System.Drawing.Point(10, 50)
+    $txtContext.Size = New-Object System.Drawing.Size(340, 20)
+    $form.Controls.Add($txtContext)
+
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = "Resume"
+    $btn.Location = New-Object System.Drawing.Point(130, 100)
+    $btn.Size = New-Object System.Drawing.Size(100, 30)
+    $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btn)
+
+    $form.ShowDialog() | Out-Null
+    $logDur = ([DateTime]::Now - $formStart).TotalSeconds
+    return @{ Context = $txtContext.Text; LogDuration = $logDur }
+}
+
 function Show-WorkBlockForm {
     $formStart = [DateTime]::Now
     $form = New-Object System.Windows.Forms.Form
@@ -358,10 +407,17 @@ $trayIcon.Visible = $true
 
 # --- Main Loop ---
 Write-Log "System" "Started" 0 "" "" "" 0 (Get-ScheduleContext)
-[System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work. I'll monitor your routine and remind you to take breaks.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 
-$blockTimeStr = Get-FormattedDuration $workBlockDuration
-[System.Windows.Forms.MessageBox]::Show("Your first work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+if ($isSameDayRestart) {
+    $resumed = Show-ResumedSessionForm
+    Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext)
+    $blockTimeStr = Get-FormattedDuration $workBlockDuration
+    [System.Windows.Forms.MessageBox]::Show("Your next work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+} else {
+    [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work. I'll monitor your routine and remind you to take breaks.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $blockTimeStr = Get-FormattedDuration $workBlockDuration
+    [System.Windows.Forms.MessageBox]::Show("Your first work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+}
 
 while ($true) {
     [System.Windows.Forms.Application]::DoEvents()
