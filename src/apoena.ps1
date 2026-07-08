@@ -664,9 +664,8 @@ if ($isSameDayRestart) {
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     [System.Windows.Forms.MessageBox]::Show("Your next work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 } else {
-    [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work. I'll monitor your routine and remind you to take breaks.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
-    [System.Windows.Forms.MessageBox]::Show("Your first work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work.`n`nI'll monitor your routine and remind you to take breaks. Your first work block has started and will last for $blockTimeStr.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 
 $todayKrs = Get-TodayKeyResults
