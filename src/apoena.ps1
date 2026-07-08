@@ -140,11 +140,13 @@ function Invoke-EndOfDay($reason) {
 function Get-FormattedDuration($seconds) {
     if ($seconds -ge 60) {
         $mins = [math]::Round($seconds / 60)
-        $suffix = if ($mins -ne 1) { "s" } else { "" }
+        $suffix = ""
+        if ($mins -ne 1) { $suffix = "s" }
         return "$mins minute$suffix"
     }
     else {
-        $suffix = if ($seconds -ne 1) { "s" } else { "" }
+        $suffix = ""
+        if ($seconds -ne 1) { $suffix = "s" }
         return "$seconds second$suffix"
     }
 }
@@ -177,7 +179,8 @@ function Add-KeyResult($category, $description) {
             if ($idNum -gt $maxId) { $maxId = $idNum }
         }
     }
-    $newId = "KR-$($maxId + 1)"
+    $newIdNum = $maxId + 1
+    $newId = "KR-$newIdNum"
     $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     $dateStr = (Get-Date).ToString("yyyy-MM-dd")
     
