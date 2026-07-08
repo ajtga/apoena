@@ -17,4 +17,7 @@
 
     # Categories for "Quick Break" (when choosing not to take a 20-20-20 rest)
     QuickBreakReasons    = @("Pee", "Poo", "Water", "Coffee", "Snack", "Stretch", "Other")
+
+    # Categories for Key Results
+    KeyResultCategories  = @("Project", "Analysis", "KPI", "Dev", "Board Request", "Management Request", "Coordination Request", "Other")
 }

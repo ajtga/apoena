@@ -6,6 +6,7 @@ Apoena runs silently in your system tray, monitoring your work routine. Every 20
 
 ## Features
 
+- **Daily Key Results** — Plan your core objectives at the start of the day and associate each work block with a single Key Result to enforce focus. ([Why multitasking is bad for memory](https://www.healthline.com/health/alzheimers-dementia/multitasking-memory-loss-link))
 - **20-Minute Work Blocks** — Monitors continuous work intervals and prompts you to log accomplishments and plan the next task.
 - **Strict Eye Rest Enforcement** — Requires 20 seconds of no mouse/keyboard input. If movement is detected, the timer restarts or you can opt for a physical break instead. ([Why 20-20-20?](https://www.healthline.com/health/eye-health/20-20-20-rule))
 - **Categorized Quick Breaks** — Classify short breaks (Water, Coffee, Bathroom, Stretch, etc.) for granular tracking.
@@ -73,6 +74,9 @@ Copy `src/config.example.psd1` to `src/config.psd1` and customize:
 
     # Categories for "Quick Break" (when choosing not to take a 20-20-20 rest)
     QuickBreakReasons    = @("Pee", "Poo", "Water", "Coffee", "Snack", "Stretch", "Other")
+
+    # Categories for your Daily Key Results
+    KeyResultCategories  = @("Projects", "Analysis", "KPIs", "Dev", "Board Request", "Manager Request", "Other")
 }
 ```
 
@@ -96,6 +100,7 @@ The log file (`apoena-log.csv`) is generated in the same directory as the script
 | `Notes` | free text | Additional observations (e.g., on return from idle) |
 | `LoggingDurationSecs` | integer | Time the user spent with the popup open before submitting |
 | `ScheduleContext` | string | Time-of-day context: `Core Hours`, `Lunch Time`, `Overtime`, `Early Arrival`, `Weekend` |
+| `KeyResultID` | string | The associated Key Result ID for the completed work block (e.g., `KR-1`) |
 
 ## Contributing
 

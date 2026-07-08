@@ -41,7 +41,9 @@ $breakDuration = if ($config.BreakDurationSeconds) { $config.BreakDurationSecond
 $idleThreshold = if ($config.IdleThresholdMinutes) { $config.IdleThresholdMinutes * 60 } else { 15 * 60 } # default: 15 minutes
 $awayReasons = if ($config.AwayReasons) { $config.AwayReasons } else { @("Meeting", "Lunch", "Call", "Offline Work", "Coffee", "Rest", "Distraction", "End of Day", "Other") }
 $quickBreakReasons = if ($config.QuickBreakReasons) { $config.QuickBreakReasons } else { @("Pee", "Poo", "Water", "Coffee", "Snack", "Stretch", "Other") }
+$global:keyResultCategories = if ($config.KeyResultCategories) { $config.KeyResultCategories } else { @("Project", "Analysis", "KPI", "Dev", "Board Request", "Management Request", "Coordination Request", "Other") }
 $logFile = Join-Path $scriptDir "apoena-log.csv"
+$krsLogFile = Join-Path $scriptDir "apoena-krs-log.csv"
 
 $global:manualInterrupt = $false
 $global:blockIndex = 0
@@ -74,7 +76,7 @@ function ConvertTo-CsvSafe($text) {
     return "`"$escaped`""
 }
 
-function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context) {
+function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId) {
     # Reset day sequence at midnight
     $today = (Get-Date).Date
     if ($today -ne $global:lastLogDate) {
@@ -111,7 +113,8 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $safePlanned,
         $safeNotes,
         $logDur,
-        $safeContext
+        $safeContext,
+        (ConvertTo-CsvSafe $keyResultId)
     )
     $row = $fields -join ','
 
@@ -146,12 +149,64 @@ function Get-FormattedDuration($seconds) {
     }
 }
 
+function Get-TodayKeyResults {
+    if (-not (Test-Path $krsLogFile)) { return @() }
+    $todayStr = (Get-Date).ToString("yyyy-MM-dd")
+    $content = Get-Content $krsLogFile | Select-Object -Skip 1
+    $krs = @()
+    foreach ($line in $content) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        # Split by comma but respect quotes. Since we only have 5 columns and no internal commas in first 3, it's safe to use a basic parse or regex.
+        # But a robust approach is to let ConvertFrom-Csv handle it.
+        try {
+            $parsed = $line | ConvertFrom-Csv -Header "Timestamp","Date","KeyResultID","Category","Description"
+            if ($parsed.Date -eq $todayStr) {
+                $krs += $parsed
+            }
+        } catch { }
+    }
+    return $krs
+}
+
+function Add-KeyResult($category, $description) {
+    $todayKrs = Get-TodayKeyResults
+    $maxId = 0
+    foreach ($kr in $todayKrs) {
+        if ($kr.KeyResultID -match 'KR-(\d+)') {
+            $idNum = [int]$matches[1]
+            if ($idNum -gt $maxId) { $maxId = $idNum }
+        }
+    }
+    $newId = "KR-$($maxId + 1)"
+    $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $dateStr = (Get-Date).ToString("yyyy-MM-dd")
+    
+    $safeCat = ConvertTo-CsvSafe $category
+    $safeDesc = ConvertTo-CsvSafe $description
+    
+    $row = "$stamp,$dateStr,$newId,$safeCat,$safeDesc"
+    $row | Out-File $krsLogFile -Append -Encoding UTF8
+    
+    return $newId
+}
+
 # --- Initialization, Crash Detection & Same-Day Restart ---
 $isSameDayRestart = $false
+if (-not (Test-Path $krsLogFile)) {
+    "Timestamp,Date,KeyResultID,Category,Description" | Out-File $krsLogFile -Encoding UTF8
+}
+
 if (-not (Test-Path $logFile)) {
-    "Timestamp,TimezoneOffset,EventCategory,EventDetail,BlockIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext" | Out-File $logFile -Encoding UTF8
+    "Timestamp,TimezoneOffset,EventCategory,EventDetail,BlockIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID" | Out-File $logFile -Encoding UTF8
 }
 else {
+    $firstLine = Get-Content $logFile -TotalCount 1
+    if ($firstLine -notmatch "KeyResultID") {
+        $content = Get-Content $logFile
+        $content[0] = $content[0] + ",KeyResultID"
+        $content | Set-Content $logFile -Encoding UTF8
+    }
+
     $lastLine = Get-Content $logFile -Tail 1
     if ($lastLine -match ',') {
         $parts = $lastLine -split ','
@@ -182,6 +237,141 @@ else {
 }
 
 # --- UI Forms ---
+function Show-KeyResultsForm {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Daily Key Results Planning"
+    $form.Size = New-Object System.Drawing.Size(420, 320)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $lblList = New-Object System.Windows.Forms.Label
+    $lblList.Text = "Today's Active Key Results:"
+    $lblList.Location = New-Object System.Drawing.Point(10, 10)
+    $lblList.AutoSize = $true
+    $form.Controls.Add($lblList)
+
+    $lstKrs = New-Object System.Windows.Forms.ListBox
+    $lstKrs.Location = New-Object System.Drawing.Point(10, 30)
+    $lstKrs.Size = New-Object System.Drawing.Size(380, 100)
+    
+    $loadKrs = {
+        $lstKrs.Items.Clear()
+        $krs = Get-TodayKeyResults
+        foreach ($kr in $krs) {
+            $lstKrs.Items.Add("[$($kr.KeyResultID)] ($($kr.Category)) $($kr.Description)") | Out-Null
+        }
+    }
+    &$loadKrs
+    $form.Controls.Add($lstKrs)
+
+    $lblCat = New-Object System.Windows.Forms.Label
+    $lblCat.Text = "Category:"
+    $lblCat.Location = New-Object System.Drawing.Point(10, 140)
+    $lblCat.AutoSize = $true
+    $form.Controls.Add($lblCat)
+
+    $cmbCat = New-Object System.Windows.Forms.ComboBox
+    $cmbCat.Items.AddRange($global:keyResultCategories)
+    if ($cmbCat.Items.Count -gt 0) { $cmbCat.SelectedIndex = 0 }
+    $cmbCat.Location = New-Object System.Drawing.Point(10, 160)
+    $cmbCat.Size = New-Object System.Drawing.Size(120, 20)
+    $cmbCat.DropDownStyle = 'DropDownList'
+    $form.Controls.Add($cmbCat)
+
+    $lblDesc = New-Object System.Windows.Forms.Label
+    $lblDesc.Text = "Description:"
+    $lblDesc.Location = New-Object System.Drawing.Point(140, 140)
+    $lblDesc.AutoSize = $true
+    $form.Controls.Add($lblDesc)
+
+    $txtDesc = New-Object System.Windows.Forms.TextBox
+    $txtDesc.Location = New-Object System.Drawing.Point(140, 160)
+    $txtDesc.Size = New-Object System.Drawing.Size(170, 20)
+    $form.Controls.Add($txtDesc)
+
+    $btnAdd = New-Object System.Windows.Forms.Button
+    $btnAdd.Text = "Add"
+    $btnAdd.Location = New-Object System.Drawing.Point(320, 158)
+    $btnAdd.Size = New-Object System.Drawing.Size(70, 24)
+    $btnAdd.Add_Click({
+        if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+            return
+        }
+        $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
+        Add-KeyResult $cat $txtDesc.Text | Out-Null
+        &$loadKrs
+        $txtDesc.Text = ""
+    })
+    $form.Controls.Add($btnAdd)
+
+    $btnClose = New-Object System.Windows.Forms.Button
+    $btnClose.Text = "Close / Start Day"
+    $btnClose.Location = New-Object System.Drawing.Point(150, 230)
+    $btnClose.Size = New-Object System.Drawing.Size(120, 30)
+    $btnClose.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btnClose)
+
+    $form.ShowDialog() | Out-Null
+}
+
+function Show-QuickAddKRForm {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Add Key Result"
+    $form.Size = New-Object System.Drawing.Size(350, 150)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $lblCat = New-Object System.Windows.Forms.Label
+    $lblCat.Text = "Category:"
+    $lblCat.Location = New-Object System.Drawing.Point(10, 10)
+    $lblCat.AutoSize = $true
+    $form.Controls.Add($lblCat)
+
+    $cmbCat = New-Object System.Windows.Forms.ComboBox
+    $cmbCat.Items.AddRange($global:keyResultCategories)
+    if ($cmbCat.Items.Count -gt 0) { $cmbCat.SelectedIndex = 0 }
+    $cmbCat.Location = New-Object System.Drawing.Point(10, 30)
+    $cmbCat.Size = New-Object System.Drawing.Size(120, 20)
+    $cmbCat.DropDownStyle = 'DropDownList'
+    $form.Controls.Add($cmbCat)
+
+    $lblDesc = New-Object System.Windows.Forms.Label
+    $lblDesc.Text = "Description:"
+    $lblDesc.Location = New-Object System.Drawing.Point(140, 10)
+    $lblDesc.AutoSize = $true
+    $form.Controls.Add($lblDesc)
+
+    $txtDesc = New-Object System.Windows.Forms.TextBox
+    $txtDesc.Location = New-Object System.Drawing.Point(140, 30)
+    $txtDesc.Size = New-Object System.Drawing.Size(180, 20)
+    $form.Controls.Add($txtDesc)
+
+    $btnAdd = New-Object System.Windows.Forms.Button
+    $btnAdd.Text = "Add Key Result"
+    $btnAdd.Location = New-Object System.Drawing.Point(120, 70)
+    $btnAdd.Size = New-Object System.Drawing.Size(100, 30)
+    $btnAdd.Add_Click({
+        if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+            return
+        }
+        $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
+        $this.Parent.Tag = Add-KeyResult $cat $txtDesc.Text
+        $this.Parent.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    })
+    $form.Controls.Add($btnAdd)
+
+    $form.ShowDialog() | Out-Null
+    return $form.Tag
+}
+
 function Show-ResumedSessionForm {
     $formStart = [DateTime]::Now
     $form = New-Object System.Windows.Forms.Form
@@ -221,38 +411,77 @@ function Show-WorkBlockForm {
     $form = New-Object System.Windows.Forms.Form
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     $form.Text = "Work Block Complete! ($blockTimeStr)"
-    $form.Size = New-Object System.Drawing.Size(430, 260)
+    $form.Size = New-Object System.Drawing.Size(430, 310)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     
+    $lblKr = New-Object System.Windows.Forms.Label
+    $lblKr.Text = "Which Key Result did you focus on?"
+    $lblKr.Location = New-Object System.Drawing.Point(10, 10)
+    $lblKr.AutoSize = $true
+    $form.Controls.Add($lblKr)
+
+    $cmbKr = New-Object System.Windows.Forms.ComboBox
+    $cmbKr.Location = New-Object System.Drawing.Point(10, 30)
+    $cmbKr.Size = New-Object System.Drawing.Size(350, 20)
+    $cmbKr.DropDownStyle = 'DropDownList'
+    
+    $loadCmbKrs = {
+        $cmbKr.Items.Clear()
+        $krs = Get-TodayKeyResults
+        foreach ($kr in $krs) {
+            $cmbKr.Items.Add("[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+        }
+    }
+    &$loadCmbKrs
+    $form.Controls.Add($cmbKr)
+
+    $btnAddKr = New-Object System.Windows.Forms.Button
+    $btnAddKr.Text = "+"
+    $btnAddKr.Location = New-Object System.Drawing.Point(370, 29)
+    $btnAddKr.Size = New-Object System.Drawing.Size(30, 22)
+    $btnAddKr.Add_Click({
+        $newId = Show-QuickAddKRForm
+        if ($newId) {
+            &$loadCmbKrs
+            for ($i = 0; $i -lt $cmbKr.Items.Count; $i++) {
+                if ($cmbKr.Items[$i] -match "\[$newId\]") {
+                    $cmbKr.SelectedIndex = $i
+                    break
+                }
+            }
+        }
+    })
+    $form.Controls.Add($btnAddKr)
+
     $lblAcc = New-Object System.Windows.Forms.Label
     $lblAcc.Text = "What did you accomplish?"
-    $lblAcc.Location = New-Object System.Drawing.Point(10, 10)
+    $lblAcc.Location = New-Object System.Drawing.Point(10, 60)
     $lblAcc.AutoSize = $true
     $form.Controls.Add($lblAcc)
     
     $txtAcc = New-Object System.Windows.Forms.TextBox
-    $txtAcc.Location = New-Object System.Drawing.Point(10, 30)
+    $txtAcc.Location = New-Object System.Drawing.Point(10, 80)
     $txtAcc.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtAcc)
     
     $lblPlan = New-Object System.Windows.Forms.Label
     $lblPlan.Text = "What do you plan to do next?"
-    $lblPlan.Location = New-Object System.Drawing.Point(10, 60)
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 110)
     $lblPlan.AutoSize = $true
     $form.Controls.Add($lblPlan)
     
     $txtPlan = New-Object System.Windows.Forms.TextBox
     $txtPlan.Name = "txtPlan"
-    $txtPlan.Location = New-Object System.Drawing.Point(10, 80)
+    $txtPlan.Location = New-Object System.Drawing.Point(10, 130)
     $txtPlan.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtPlan)
     
     $chkCont = New-Object System.Windows.Forms.CheckBox
     $chkCont.Text = "Continue previous task"
-    $chkCont.Location = New-Object System.Drawing.Point(10, 110)
+    $chkCont.Location = New-Object System.Drawing.Point(10, 160)
     $chkCont.Size = New-Object System.Drawing.Size(200, 20)
     $chkCont.Add_CheckedChanged({
             $targetTxt = $this.Parent.Controls.Find("txtPlan", $false)[0]
@@ -269,25 +498,35 @@ function Show-WorkBlockForm {
     
     $btnEye = New-Object System.Windows.Forms.Button
     $btnEye.Text = "Eye Rest (20s)"
-    $btnEye.Location = New-Object System.Drawing.Point(20, 160)
+    $btnEye.Location = New-Object System.Drawing.Point(20, 210)
     $btnEye.Size = New-Object System.Drawing.Size(120, 40)
     $btnEye.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+    $btnEye.Enabled = ($cmbKr.Items.Count -gt 0 -and $cmbKr.SelectedIndex -ge 0)
     $form.Controls.Add($btnEye)
     
     $btnBreak = New-Object System.Windows.Forms.Button
     $btnBreak.Text = "Quick Break"
-    $btnBreak.Location = New-Object System.Drawing.Point(145, 160)
+    $btnBreak.Location = New-Object System.Drawing.Point(145, 210)
     $btnBreak.Size = New-Object System.Drawing.Size(120, 40)
     $btnBreak.DialogResult = [System.Windows.Forms.DialogResult]::No
+    $btnBreak.Enabled = $btnEye.Enabled
     $form.Controls.Add($btnBreak)
 
     $btnPause = New-Object System.Windows.Forms.Button
     $btnPause.Text = "Pause / Away"
-    $btnPause.Location = New-Object System.Drawing.Point(270, 160)
+    $btnPause.Location = New-Object System.Drawing.Point(270, 210)
     $btnPause.Size = New-Object System.Drawing.Size(120, 40)
     $btnPause.DialogResult = [System.Windows.Forms.DialogResult]::Abort
+    $btnPause.Enabled = $btnEye.Enabled
     $form.Controls.Add($btnPause)
     
+    $cmbKr.Add_SelectedIndexChanged({
+        $hasSel = ($this.SelectedIndex -ge 0)
+        $btnEye.Enabled = $hasSel
+        $btnBreak.Enabled = $hasSel
+        $btnPause.Enabled = $hasSel
+    })
+
     $result = $form.ShowDialog()
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
     
@@ -295,11 +534,19 @@ function Show-WorkBlockForm {
     if ($result -eq [System.Windows.Forms.DialogResult]::Yes) { $action = 'EyeRest' }
     elseif ($result -eq [System.Windows.Forms.DialogResult]::Abort) { $action = 'Pause' }
 
+    $selectedKrId = ""
+    if ($cmbKr.SelectedItem) {
+        if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+            $selectedKrId = $matches[1]
+        }
+    }
+
     return @{
         Action       = $action
         Accomplished = $txtAcc.Text
         Planned      = $txtPlan.Text
         LogDuration  = $logDur
+        KeyResultID  = $selectedKrId
     }
 }
 
@@ -388,12 +635,15 @@ function Show-QuickBreakForm {
 $components = New-Object System.ComponentModel.Container
 $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip($components)
 
+$itemKrs = $contextMenu.Items.Add("Manage Key Results...")
+$itemKrs.Add_Click({ Show-KeyResultsForm })
+
 $itemPause = $contextMenu.Items.Add("Pause / Log Break")
 $itemPause.Add_Click({ $global:manualInterrupt = $true })
 
 $itemExit = $contextMenu.Items.Add("Exit")
 $itemExit.Add_Click({
-        Write-Log "System" "Exit" 0 "" "" "Manual tray exit" 0 (Get-ScheduleContext)
+        Write-Log "System" "Exit" 0 "" "" "Manual tray exit" 0 (Get-ScheduleContext) ""
         $trayIcon.Visible = $false
         $trayIcon.Dispose()
         [System.Environment]::Exit(0)
@@ -406,17 +656,22 @@ $trayIcon.Text = "Apoena"
 $trayIcon.Visible = $true
 
 # --- Main Loop ---
-Write-Log "System" "Started" 0 "" "" "" 0 (Get-ScheduleContext)
+Write-Log "System" "Started" 0 "" "" "" 0 (Get-ScheduleContext) ""
 
 if ($isSameDayRestart) {
     $resumed = Show-ResumedSessionForm
-    Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext)
+    Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext) ""
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     [System.Windows.Forms.MessageBox]::Show("Your next work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 } else {
     [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work. I'll monitor your routine and remind you to take breaks.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     [System.Windows.Forms.MessageBox]::Show("Your first work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+}
+
+$todayKrs = Get-TodayKeyResults
+if ($todayKrs.Count -eq 0) {
+    Show-KeyResultsForm
 }
 
 while ($true) {
@@ -435,14 +690,14 @@ while ($true) {
     # 1. Check for manual tray interruption
     if ($global:manualInterrupt) {
         $workedSecs = ([DateTime]::Now - $workBlockStart).TotalSeconds
-        Write-Log "Work Block" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext)
+        Write-Log "Work Block" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) ""
         
         $pauseStart = [DateTime]::Now
         [System.Windows.Forms.MessageBox]::Show("Monitoring paused. Click OK when you return to your desk.", "Paused", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
         
         $awaySecs = ([DateTime]::Now - $pauseStart).TotalSeconds
         $rtn = Show-ReturnForm ($awaySecs / 60)
-        Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext)
+        Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
         Invoke-EndOfDay $rtn.Reason
         
         $lastBreak = [DateTime]::Now
@@ -457,12 +712,12 @@ while ($true) {
             $awayStart = [DateTime]::Now.AddSeconds(-$idleSeconds)
             $workedSecs = ($awayStart - $workBlockStart).TotalSeconds
             
-            Write-Log "Work Block" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext)
+            Write-Log "Work Block" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext) ""
             [System.Windows.Forms.MessageBox]::Show("You've been idle for over 15 minutes. Monitoring paused until you click OK.", "Idle Detected", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             
             $actualAwaySecs = ([DateTime]::Now - $awayStart).TotalSeconds
             $rtn = Show-ReturnForm ($actualAwaySecs / 60)
-            Write-Log "Away" $rtn.Reason $actualAwaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext)
+            Write-Log "Away" $rtn.Reason $actualAwaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
             Invoke-EndOfDay $rtn.Reason
             
             $lastBreak = [DateTime]::Now
@@ -474,7 +729,7 @@ while ($true) {
     if (([DateTime]::Now - $lastBreak).TotalSeconds -ge $workBlockDuration) {
         $workedSecs = ([DateTime]::Now - $workBlockStart).TotalSeconds
         $result = Show-WorkBlockForm
-        Write-Log "Work Block" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext)
+        Write-Log "Work Block" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID
         
         if ($result.Action -eq 'Pause') {
             $pauseStart = [DateTime]::Now
@@ -482,7 +737,7 @@ while ($true) {
             
             $awaySecs = ([DateTime]::Now - $pauseStart).TotalSeconds
             $rtn = Show-ReturnForm ($awaySecs / 60)
-            Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext)
+            Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
             Invoke-EndOfDay $rtn.Reason
             
         }
@@ -510,7 +765,7 @@ while ($true) {
                         $qbResult = Show-QuickBreakForm
                         $breakStart = [DateTime]::Now
                         [System.Windows.Forms.MessageBox]::Show("Take your time! Click OK when you return to your desk.", "Quick Break", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-                        Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext)
+                        Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext) ""
                         $restCompleted = $true
                     }
                     else {
@@ -521,7 +776,7 @@ while ($true) {
                     $endTime = [DateTime]::Now.ToString("HH:mm:ss")
                     [System.Windows.Forms.MessageBox]::Show("Rest complete at $endTime! Click OK to resume.", "Break Over", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
                     $restCompleted = $true
-                    Write-Log "Eye Rest" "Complete" $breakDuration "" "" "" 0 (Get-ScheduleContext)
+                    Write-Log "Eye Rest" "Complete" $breakDuration "" "" "" 0 (Get-ScheduleContext) ""
                 }
             }
         }
@@ -529,7 +784,7 @@ while ($true) {
             $qbResult = Show-QuickBreakForm
             $breakStart = [DateTime]::Now
             [System.Windows.Forms.MessageBox]::Show("Take your time! Click OK when you return to your desk.", "Quick Break", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext)
+            Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext) ""
         }
         
         $lastBreak = [DateTime]::Now
