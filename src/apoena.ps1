@@ -340,7 +340,7 @@ function Show-KeyResultsForm {
     $form.Controls.Add($btnClose)
 
     $form.Add_FormClosing({
-        param($sender, $e)
+        param($evtSender, $e)
         if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
             $todayKrs = Get-TodayKeyResults
             if ($todayKrs.Count -eq 0) {
