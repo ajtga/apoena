@@ -161,11 +161,12 @@ function Get-TodayKeyResults {
         # Split by comma but respect quotes. Since we only have 5 columns and no internal commas in first 3, it's safe to use a basic parse or regex.
         # But a robust approach is to let ConvertFrom-Csv handle it.
         try {
-            $parsed = $line | ConvertFrom-Csv -Header "Timestamp","Date","KeyResultID","Category","Description"
+            $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description"
             if ($parsed.Date -eq $todayStr) {
                 $krs += $parsed
             }
-        } catch { }
+        }
+        catch { }
     }
     return $krs
 }
@@ -222,12 +223,14 @@ else {
                 $isSameDayRestart = $true
                 $global:blockIndex = [int]$parts[4]
                 $global:daySequence = [int]$parts[5]
-            } else {
+            }
+            else {
                 $global:blockIndex = [int]$parts[4]
                 $global:daySequence = [int]$parts[5]
                 $global:lastLogDate = $lastDate
             }
-        } catch { }
+        }
+        catch { }
 
         # Crash detection
         $lastEvent = $parts[2].Trim('"')
@@ -236,7 +239,8 @@ else {
             # Previous session did not exit cleanly
             if ($lastDate -eq (Get-Date).Date) {
                 Write-Log "System" "Unexpected Exit" 0 "" "" "Detected on startup" 0 (Get-ScheduleContext) ""
-            } else {
+            }
+            else {
                 # Log with yesterday's timestamp (last log time + 1 second) to keep history accurate and prevent same-day restart pollution
                 $lastDateTime = [datetime]::ParseExact($lastTimestamp, "yyyy-MM-dd HH:mm:ss", $null)
                 $crashTimestamp = $lastDateTime.AddSeconds(1).ToString("yyyy-MM-dd HH:mm:ss")
@@ -307,15 +311,15 @@ function Show-KeyResultsForm {
     $btnAdd.Location = New-Object System.Drawing.Point(320, 158)
     $btnAdd.Size = New-Object System.Drawing.Size(70, 24)
     $btnAdd.Add_Click({
-        if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
-            [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-            return
-        }
-        $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
-        Add-KeyResult $cat $txtDesc.Text | Out-Null
-        &$loadKrs
-        $txtDesc.Text = ""
-    })
+            if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
+                [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                return
+            }
+            $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
+            Add-KeyResult $cat $txtDesc.Text | Out-Null
+            &$loadKrs
+            $txtDesc.Text = ""
+        })
     $form.Controls.Add($btnAdd)
 
     $btnClose = New-Object System.Windows.Forms.Button
@@ -323,40 +327,41 @@ function Show-KeyResultsForm {
     $btnClose.Location = New-Object System.Drawing.Point(150, 230)
     $btnClose.Size = New-Object System.Drawing.Size(120, 30)
     $btnClose.Add_Click({
-        $todayKrs = Get-TodayKeyResults
-        if ($todayKrs.Count -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show(
-                $form,
-                "You must define at least one Key Result to start your day.",
-                "Key Result Required",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            ) | Out-Null
-        } else {
-            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
-            $form.Close()
-        }
-    })
+            $todayKrs = Get-TodayKeyResults
+            if ($todayKrs.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    $form,
+                    "You must define at least one Key Result to start your day.",
+                    "Key Result Required",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                ) | Out-Null
+            }
+            else {
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                $form.Close()
+            }
+        })
     $form.Controls.Add($btnClose)
 
     $form.Add_FormClosing({
-        param($evtSender, $e)
-        if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
-            $todayKrs = Get-TodayKeyResults
-            if ($todayKrs.Count -eq 0) {
-                $confirm = [System.Windows.Forms.MessageBox]::Show(
-                    $form,
-                    "Closing this window will exit Apoena completely. Are you sure you want to exit?",
-                    "Exit Apoena?",
-                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                    [System.Windows.Forms.MessageBoxIcon]::Question
-                )
-                if ($confirm -eq [System.Windows.Forms.DialogResult]::No) {
-                    $e.Cancel = $true
+            param($evtSender, $e)
+            if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+                $todayKrs = Get-TodayKeyResults
+                if ($todayKrs.Count -eq 0) {
+                    $confirm = [System.Windows.Forms.MessageBox]::Show(
+                        $form,
+                        "Closing this window will exit Apoena completely. Are you sure you want to exit?",
+                        "Exit Apoena?",
+                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                        [System.Windows.Forms.MessageBoxIcon]::Question
+                    )
+                    if ($confirm -eq [System.Windows.Forms.DialogResult]::No) {
+                        $e.Cancel = $true
+                    }
                 }
             }
-        }
-    })
+        })
 
     $form.ShowDialog() | Out-Null
 }
@@ -401,14 +406,14 @@ function Show-QuickAddKRForm {
     $btnAdd.Location = New-Object System.Drawing.Point(120, 70)
     $btnAdd.Size = New-Object System.Drawing.Size(100, 30)
     $btnAdd.Add_Click({
-        if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
-            [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-            return
-        }
-        $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
-        $this.Parent.Tag = Add-KeyResult $cat $txtDesc.Text
-        $this.Parent.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    })
+            if ([string]::IsNullOrWhiteSpace($txtDesc.Text)) {
+                [System.Windows.Forms.MessageBox]::Show("Please enter a description.", "Required", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                return
+            }
+            $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
+            $this.Parent.Tag = Add-KeyResult $cat $txtDesc.Text
+            $this.Parent.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        })
     $form.Controls.Add($btnAdd)
 
     $form.ShowDialog() | Out-Null
@@ -486,17 +491,17 @@ function Show-WorkBlockForm {
     $btnAddKr.Location = New-Object System.Drawing.Point(370, 29)
     $btnAddKr.Size = New-Object System.Drawing.Size(30, 22)
     $btnAddKr.Add_Click({
-        $newId = Show-QuickAddKRForm
-        if ($newId) {
-            &$loadCmbKrs
-            for ($i = 0; $i -lt $cmbKr.Items.Count; $i++) {
-                if ($cmbKr.Items[$i] -match "\[$newId\]") {
-                    $cmbKr.SelectedIndex = $i
-                    break
+            $newId = Show-QuickAddKRForm
+            if ($newId) {
+                &$loadCmbKrs
+                for ($i = 0; $i -lt $cmbKr.Items.Count; $i++) {
+                    if ($cmbKr.Items[$i] -match "\[$newId\]") {
+                        $cmbKr.SelectedIndex = $i
+                        break
+                    }
                 }
             }
-        }
-    })
+        })
     $form.Controls.Add($btnAddKr)
 
     $lblAcc = New-Object System.Windows.Forms.Label
@@ -564,11 +569,11 @@ function Show-WorkBlockForm {
     $form.Controls.Add($btnPause)
     
     $cmbKr.Add_SelectedIndexChanged({
-        $hasSel = ($this.SelectedIndex -ge 0)
-        $btnEye.Enabled = $hasSel
-        $btnBreak.Enabled = $hasSel
-        $btnPause.Enabled = $hasSel
-    })
+            $hasSel = ($this.SelectedIndex -ge 0)
+            $btnEye.Enabled = $hasSel
+            $btnBreak.Enabled = $hasSel
+            $btnPause.Enabled = $hasSel
+        })
 
     $result = $form.ShowDialog()
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
@@ -706,7 +711,8 @@ if ($isSameDayRestart) {
     Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext) ""
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     [System.Windows.Forms.MessageBox]::Show("Your next work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-} else {
+}
+else {
     $blockTimeStr = Get-FormattedDuration $workBlockDuration
     [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work.`n`nI'll monitor your routine and remind you to take breaks. Your first work block has started and will last for $blockTimeStr.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
