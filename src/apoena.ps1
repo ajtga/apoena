@@ -322,8 +322,41 @@ function Show-KeyResultsForm {
     $btnClose.Text = "Close / Start Day"
     $btnClose.Location = New-Object System.Drawing.Point(150, 230)
     $btnClose.Size = New-Object System.Drawing.Size(120, 30)
-    $btnClose.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $btnClose.Add_Click({
+        $todayKrs = Get-TodayKeyResults
+        if ($todayKrs.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show(
+                $form,
+                "You must define at least one Key Result to start your day.",
+                "Key Result Required",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        } else {
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $form.Close()
+        }
+    })
     $form.Controls.Add($btnClose)
+
+    $form.Add_FormClosing({
+        param($sender, $e)
+        if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+            $todayKrs = Get-TodayKeyResults
+            if ($todayKrs.Count -eq 0) {
+                $confirm = [System.Windows.Forms.MessageBox]::Show(
+                    $form,
+                    "Closing this window will exit Apoena completely. Are you sure you want to exit?",
+                    "Exit Apoena?",
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                    [System.Windows.Forms.MessageBoxIcon]::Question
+                )
+                if ($confirm -eq [System.Windows.Forms.DialogResult]::No) {
+                    $e.Cancel = $true
+                }
+            }
+        }
+    })
 
     $form.ShowDialog() | Out-Null
 }
@@ -681,6 +714,15 @@ if ($isSameDayRestart) {
 $todayKrs = Get-TodayKeyResults
 if ($todayKrs.Count -eq 0) {
     Show-KeyResultsForm
+    $todayKrs = Get-TodayKeyResults
+    if ($todayKrs.Count -eq 0) {
+        Write-Log "System" "Exit" 0 "" "" "Closed planning form on startup without key results" 0 (Get-ScheduleContext) ""
+        if ($trayIcon) {
+            $trayIcon.Visible = $false
+            $trayIcon.Dispose()
+        }
+        [System.Environment]::Exit(0)
+    }
 }
 
 while ($true) {

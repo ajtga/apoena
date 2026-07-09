@@ -163,3 +163,78 @@ previous session.
 - [x] The standard welcome message appears:
       *"Welcome to Apoena! Have a great day at work..."*
 - [x] Both `BlockIndex` and `DaySequence` start from 1.
+
+---
+
+## Issue #6 — Daily Key Results Module
+
+**Goal:** The user must define at least one Key Result (KR) to start/proceed with their day. Work blocks cannot be completed without associating them with a Key Result. Key results can be added dynamically and are logged to `src/apoena-krs-log.csv`.
+
+### Steps — Daily Planning Prompt & Validation on Startup
+
+1. Ensure no KRs are logged in `src/apoena-krs-log.csv` for today (e.g. temporarily delete or rename `src/apoena-krs-log.csv` so it starts fresh).
+2. Launch Apoena (`start-apoena.cmd`).
+3. Observe that the **Daily Key Results Planning** window opens automatically.
+4. Click **Close / Start Day** without adding any Key Results.
+
+### Expected Result
+
+- [x] A warning message box appears: **"You must define at least one Key Result to start your day."**
+- [x] After clicking OK on the warning, the planning form remains open.
+
+### Steps — Aborting Startup
+
+5. Click the **"X"** close button on the planning window without defining any Key Result.
+6. When prompted: *"Closing this window will exit Apoena completely. Are you sure you want to exit?"*, click **No**.
+7. Observe that the planning form remains open.
+8. Click the **"X"** close button again, and this time click **Yes**.
+9. Open `src/apoena-log.csv` in a plain text editor.
+
+### Expected Result
+
+- [x] The exit confirmation dialog appears when clicking "X" with 0 KRs.
+- [x] Clicking "No" keeps the planning window open.
+- [x] Clicking "Yes" closes the planning window, disposes the tray icon, and exits the process completely.
+- [x] `src/apoena-log.csv` contains a matching row at the end with `EventCategory = System`, `EventDetail = Exit`, and the description `"Closed planning form on startup without key results"`.
+
+### Steps — Starting the Day & Adding KRs
+
+10. Launch Apoena again.
+11. Select a category (e.g., **Dev**), type a description (e.g., **Implement testing**), and click **Add**.
+12. Observe that the list box updates to show the new KR with a dynamic ID (e.g., `[KR-1] (Dev) Implement testing`).
+13. Click **Close / Start Day**.
+
+### Expected Result
+
+- [x] The planning form closes.
+- [x] Apoena continues running in the system tray and the timer starts counting.
+- [x] Check `src/apoena-krs-log.csv` to verify that `KR-1` is recorded.
+
+### Steps — Dynamic KR Addition via Tray
+
+14. Right-click the tray icon → click **Manage Key Results...**.
+15. Add a second KR (e.g., category **KPI**, description **Code reviews**).
+16. Click **Close / Start Day**.
+
+### Expected Result
+
+- [x] The new KR is saved to `src/apoena-krs-log.csv` as `KR-2`.
+- [x] The planning form closes successfully.
+
+### Steps — Work Block KR Selection & On-the-fly Adding
+
+17. Set `WorkBlockMinutes = 0.1` in `src/config.psd1` (so work blocks finish in 6 seconds).
+18. Launch/restart Apoena and wait for the work block popup to appear.
+19. Observe that the log action buttons (**Eye Rest (20s)**, **Quick Break**, **Pause / Away**) are disabled by default.
+20. Select `KR-1` from the dropdown.
+21. Observe that the log action buttons become enabled.
+22. Click the `[+]` button next to the dropdown.
+23. Enter category **Other** and description **Ad-hoc meeting** in the quick add form, then click **Add Key Result**.
+
+### Expected Result
+
+- [x] The quick add form closes.
+- [x] The new KR is registered in `src/apoena-krs-log.csv` as `KR-3`.
+- [x] The dropdown in the work block form updates and automatically selects the newly created KR.
+- [x] Click **Eye Rest (20s)** and complete it.
+- [x] Open `src/apoena-log.csv` in a text editor and verify that the final column of the logged work block contains `KR-3`.
