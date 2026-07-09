@@ -76,18 +76,18 @@ function ConvertTo-CsvSafe($text) {
     return "`"$escaped`""
 }
 
-function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId) {
+function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId, $customTimestamp = $null) {
     # Reset day sequence at midnight
-    $today = (Get-Date).Date
-    if ($today -ne $global:lastLogDate) {
+    $logDate = if ($customTimestamp) { [datetime]::ParseExact($customTimestamp, "yyyy-MM-dd HH:mm:ss", $null).Date } else { (Get-Date).Date }
+    if ($logDate -ne $global:lastLogDate) {
         $global:daySequence = 0
-        $global:lastLogDate = $today
+        $global:lastLogDate = $logDate
     }
 
     $global:blockIndex++
     $global:daySequence++
 
-    $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $stamp = if ($customTimestamp) { $customTimestamp } else { (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
     $tzOffset = (Get-Date).ToString("zzz")
     
     # Keep 3 decimal places for millisecond precision
@@ -222,18 +222,25 @@ else {
                 $isSameDayRestart = $true
                 $global:blockIndex = [int]$parts[4]
                 $global:daySequence = [int]$parts[5]
+            } else {
+                $global:blockIndex = [int]$parts[4]
+                $global:daySequence = [int]$parts[5]
+                $global:lastLogDate = $lastDate
             }
         } catch { }
 
         # Crash detection
         $lastEvent = $parts[2].Trim('"')
-        if ($lastEvent -notmatch 'System') {
+        $lastDetail = $parts[3].Trim('"')
+        if ($lastEvent -ne 'System' -or $lastDetail -notmatch 'Exit') {
             # Previous session did not exit cleanly
-        }
-        else {
-            $lastDetail = $parts[3].Trim('"')
-            if ($lastDetail -notmatch 'Exit') {
-                Write-Log "System" "Unexpected Exit" 0 "" "" "Detected on startup" 0 (Get-ScheduleContext)
+            if ($lastDate -eq (Get-Date).Date) {
+                Write-Log "System" "Unexpected Exit" 0 "" "" "Detected on startup" 0 (Get-ScheduleContext) ""
+            } else {
+                # Log with yesterday's timestamp (last log time + 1 second) to keep history accurate and prevent same-day restart pollution
+                $lastDateTime = [datetime]::ParseExact($lastTimestamp, "yyyy-MM-dd HH:mm:ss", $null)
+                $crashTimestamp = $lastDateTime.AddSeconds(1).ToString("yyyy-MM-dd HH:mm:ss")
+                Write-Log "System" "Unexpected Exit" 0 "" "" "Detected on startup" 0 (Get-ScheduleContext) "" $crashTimestamp
             }
         }
     }

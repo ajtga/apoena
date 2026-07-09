@@ -19,8 +19,8 @@ space and no missing character.
 
 ### Expected Result
 
-- [ ] The bottom button label reads exactly **Log and Resume**.
-- [ ] No double space, no ampersand, no underlined letter.
+- [x] The bottom button label reads exactly **Log and Resume**.
+- [x] No double space, no ampersand, no underlined letter.
 
 ---
 
@@ -36,16 +36,16 @@ space and no missing character.
 
 ### Expected Result
 
-- [ ] A message box appears: **"Apoena is already running in the system tray."**
-- [ ] After clicking OK, no second tray icon is created.
-- [ ] The first instance continues running normally.
+- [x] A message box appears: **"Apoena is already running in the system tray."**
+- [x] After clicking OK, no second tray icon is created.
+- [x] The first instance continues running normally.
 
 ### Edge Case
 
 4. Exit the first instance (tray → Exit).
 5. Launch again.
 
-- [ ] Apoena starts normally — the mutex was released.
+- [x] Apoena starts normally — the mutex was released.
 
 ---
 
@@ -109,12 +109,12 @@ break the CSV column structure.
 
 ### Expected Result
 
-- [ ] The Accomplished column contains:
+- [x] The Accomplished column contains:
       `"Fixed bug, refactored ""parser"", done"`
-- [ ] The Planned column contains: `"Review PR #42, merge"`
-- [ ] The row still has exactly **12 comma-separated fields** (commas inside
+- [x] The Planned column contains: `"Review PR #42, merge"`
+- [x] The row still has exactly **12 comma-separated fields** (commas inside
       quotes do not count as delimiters).
-- [ ] Opening the CSV in Excel shows the text intact in the correct columns.
+- [x] Opening the CSV in Excel shows the text intact in the correct columns.
 
 ---
 
@@ -133,21 +133,33 @@ previous session.
 
 ### Expected Result
 
-- [ ] A "Welcome Back" form appears with the text
+- [x] A "Welcome Back" form appears with the text
       *"Apoena was already running today. What happened since it closed?"*
-- [ ] The form has a free-text input and a **Resume** button.
-- [ ] After clicking Resume, the CSV contains a new row with
+- [x] The form has a free-text input and a **Resume** button.
+- [x] After clicking Resume, the CSV contains a new row with
       `EventCategory = System` and `EventDetail = Resumed`.
-- [ ] The `BlockIndex` and `DaySequence` in the new rows continue from the
+- [x] The `BlockIndex` and `DaySequence` in the new rows continue from the
       values logged before the exit (not reset to 1).
 
 ### Steps — New-day start
 
-4. Delete `src/apoena-log.csv` (or wait until the next day).
+4. Do NOT delete `src/apoena-log.csv` and wait until the next day (or modify the timestamp of the last logged row to yesterday's date).
 5. Launch Apoena.
 
 ### Expected Result
 
-- [ ] The standard welcome message appears:
+- [x] The standard welcome message appears:
       *"Welcome to Apoena! Have a great day at work..."*
-- [ ] `BlockIndex` and `DaySequence` start from 1.
+- [x] `BlockIndex` continues from the last logged block index in the CSV (e.g., if the last logged index was 4, it resumes at 5).
+- [x] `DaySequence` starts from 1.
+
+### Steps — Fresh Start (No prior logs)
+
+6. Delete `src/apoena-log.csv`.
+7. Launch Apoena.
+
+### Expected Result
+
+- [x] The standard welcome message appears:
+      *"Welcome to Apoena! Have a great day at work..."*
+- [x] Both `BlockIndex` and `DaySequence` start from 1.
