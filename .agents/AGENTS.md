@@ -73,3 +73,7 @@ runs silently in the system tray.
 - The `#` character starts a comment in PowerShell. When git commit messages
   or other arguments need a literal `#`, use single-quoted strings or escape
   with a backtick (`` `# ``).
+
+## Development & Execution
+
+- **Background GUI Tasks:** Avoid launching interactive/GUI scripts (like `apoena.ps1`) in the background, since the agent cannot interact with the GUI and it locks global resources. If you must run the application for startup verification, always ensure you terminate/kill the background task immediately afterward to release the global mutex (`Global\ApoenaEyeRestMutex`) and prevent blocking the user.
