@@ -179,7 +179,7 @@ function ConvertTo-CsvSafe($text) {
     return "`"$escaped`""
 }
 
-function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId, $customTimestamp = $null) {
+function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId, $customTimestamp = $null, $isDistraction = $false) {
     # Reset day sequence at midnight
     $logDate = if ($customTimestamp) { [datetime]::ParseExact($customTimestamp, "yyyy-MM-dd HH:mm:ss", $null).Date } else { (Get-Date).Date }
     if ($logDate -ne $global:lastLogDate) {
@@ -217,7 +217,8 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $safeNotes,
         $logDur,
         $safeContext,
-        (ConvertTo-CsvSafe $keyResultId)
+        (ConvertTo-CsvSafe $keyResultId),
+        (ConvertTo-CsvSafe $isDistraction.ToString())
     )
     $row = $fields -join ','
 
@@ -304,13 +305,18 @@ if (-not (Test-Path $krsLogFile)) {
 }
 
 if (-not (Test-Path $logFile)) {
-    "Timestamp,TimezoneOffset,EventCategory,EventDetail,SessionIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID" | Out-File $logFile -Encoding UTF8
+    "Timestamp,TimezoneOffset,EventCategory,EventDetail,SessionIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID,IsDistraction" | Out-File $logFile -Encoding UTF8
 }
 else {
     $firstLine = Get-Content $logFile -TotalCount 1
     if ($firstLine -notmatch "KeyResultID") {
         $content = Get-Content $logFile
-        $content[0] = $content[0] + ",KeyResultID"
+        $content[0] = $content[0] + ",KeyResultID,IsDistraction"
+        $content | Set-Content $logFile -Encoding UTF8
+    }
+    elseif ($firstLine -notmatch "IsDistraction") {
+        $content = Get-Content $logFile
+        $content[0] = $content[0] + ",IsDistraction"
         $content | Set-Content $logFile -Encoding UTF8
     }
 
@@ -562,7 +568,7 @@ function Show-FocusSessionForm {
     $form = New-Object System.Windows.Forms.Form
     $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
     $form.Text = "Focus Session Complete! ($focusSessionTimeStr)"
-    $form.Size = New-Object System.Drawing.Size(430, 310)
+    $form.Size = New-Object System.Drawing.Size(430, 335)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
@@ -609,59 +615,65 @@ function Show-FocusSessionForm {
         })
     $form.Controls.Add($btnAddKr)
 
+    $chkUnplanned = New-Object System.Windows.Forms.CheckBox
+    $chkUnplanned.Text = "Unplanned / Distracted"
+    $chkUnplanned.Location = New-Object System.Drawing.Point(10, 55)
+    $chkUnplanned.Size = New-Object System.Drawing.Size(200, 20)
+    $form.Controls.Add($chkUnplanned)
+
     $lblAcc = New-Object System.Windows.Forms.Label
     $lblAcc.Text = "What did you accomplish?"
-    $lblAcc.Location = New-Object System.Drawing.Point(10, 60)
+    $lblAcc.Location = New-Object System.Drawing.Point(10, 85)
     $lblAcc.AutoSize = $true
     $form.Controls.Add($lblAcc)
     
     $txtAcc = New-Object System.Windows.Forms.TextBox
-    $txtAcc.Location = New-Object System.Drawing.Point(10, 80)
+    $txtAcc.Location = New-Object System.Drawing.Point(10, 105)
     $txtAcc.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtAcc)
     
     $lblPlan = New-Object System.Windows.Forms.Label
     $lblPlan.Text = "What do you plan to do next?"
-    $lblPlan.Location = New-Object System.Drawing.Point(10, 110)
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 135)
     $lblPlan.AutoSize = $true
     $form.Controls.Add($lblPlan)
     
     $txtPlan = New-Object System.Windows.Forms.TextBox
     $txtPlan.Name = "txtPlan"
-    $txtPlan.Location = New-Object System.Drawing.Point(10, 130)
+    $txtPlan.Location = New-Object System.Drawing.Point(10, 155)
     $txtPlan.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtPlan)
     
     $chkCont = New-Object System.Windows.Forms.CheckBox
     $chkCont.Text = "Continue previous task"
-    $chkCont.Location = New-Object System.Drawing.Point(10, 160)
+    $chkCont.Location = New-Object System.Drawing.Point(10, 185)
     $chkCont.Size = New-Object System.Drawing.Size(200, 20)
     $form.Controls.Add($chkCont)
     
     $btnEye = New-Object System.Windows.Forms.Button
     $btnEye.Text = "Eye Rest (20s)"
-    $btnEye.Location = New-Object System.Drawing.Point(20, 210)
+    $btnEye.Location = New-Object System.Drawing.Point(20, 235)
     $btnEye.Size = New-Object System.Drawing.Size(120, 40)
     $btnEye.Enabled = $false
     $form.Controls.Add($btnEye)
     
     $btnBreak = New-Object System.Windows.Forms.Button
     $btnBreak.Text = "Quick Break"
-    $btnBreak.Location = New-Object System.Drawing.Point(145, 210)
+    $btnBreak.Location = New-Object System.Drawing.Point(145, 235)
     $btnBreak.Size = New-Object System.Drawing.Size(120, 40)
     $btnBreak.Enabled = $false
     $form.Controls.Add($btnBreak)
 
     $btnPause = New-Object System.Windows.Forms.Button
     $btnPause.Text = "Pause / Away"
-    $btnPause.Location = New-Object System.Drawing.Point(270, 210)
+    $btnPause.Location = New-Object System.Drawing.Point(270, 235)
     $btnPause.Size = New-Object System.Drawing.Size(120, 40)
     $btnPause.Enabled = $false
     $form.Controls.Add($btnPause)
 
     # --- Input Validation ---
     $validateInputs = {
-        $hasKr   = ($cmbKr.SelectedIndex -ge 0)
+        $hasKr   = ($chkUnplanned.Checked -or $cmbKr.SelectedIndex -ge 0)
         $hasAcc  = (-not [string]::IsNullOrWhiteSpace($txtAcc.Text))
         $hasPlan = ($chkCont.Checked -or (-not [string]::IsNullOrWhiteSpace($txtPlan.Text)))
         $valid   = ($hasKr -and $hasAcc -and $hasPlan)
@@ -669,6 +681,15 @@ function Show-FocusSessionForm {
         $btnBreak.Enabled = $valid
         $btnPause.Enabled = $valid
     }
+
+    $chkUnplanned.Add_CheckedChanged({
+        $cmbKr.Enabled = -not $this.Checked
+        $btnAddKr.Enabled = -not $this.Checked
+        if ($this.Checked) {
+            $cmbKr.SelectedIndex = -1
+        }
+        &$validateInputs
+    })
 
     $cmbKr.Add_SelectedIndexChanged({ &$validateInputs })
     $txtAcc.Add_TextChanged({ &$validateInputs })
@@ -766,18 +787,19 @@ function Show-FocusSessionForm {
     elseif ($result -eq [System.Windows.Forms.DialogResult]::Abort) { $action = 'Pause' }
 
     $selectedKrId = ""
-    if ($cmbKr.SelectedItem) {
+    if (-not $chkUnplanned.Checked -and $cmbKr.SelectedItem) {
         if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
             $selectedKrId = $matches[1]
         }
     }
 
     return @{
-        Action       = $action
-        Accomplished = $txtAcc.Text
-        Planned      = $txtPlan.Text
-        LogDuration  = $logDur
-        KeyResultID  = $selectedKrId
+        Action        = $action
+        Accomplished  = $txtAcc.Text
+        Planned       = $txtPlan.Text
+        LogDuration   = $logDur
+        KeyResultID   = $selectedKrId
+        IsDistraction = $chkUnplanned.Checked
     }
 }
 
@@ -984,7 +1006,7 @@ while ($true) {
         $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
         $result = Show-FocusSessionForm
         $global:lastPlannedTask = $result.Planned
-        Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID
+        Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID $null $result.IsDistraction
         
         if ($result.Action -eq 'Pause') {
             $pauseStart = [DateTime]::Now
