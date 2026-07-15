@@ -524,6 +524,7 @@ function Show-QuickAddKRForm {
             $this.Parent.DialogResult = [System.Windows.Forms.DialogResult]::OK
         })
     $form.Controls.Add($btnAdd)
+    $form.AcceptButton = $btnAdd
 
     $form.ShowDialog() | Out-Null
     return $form.Tag
@@ -557,6 +558,7 @@ function Show-ResumedSessionForm {
     $btn.Size = New-Object System.Drawing.Size(100, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($btn)
+    $form.AcceptButton = $btn
 
     $form.ShowDialog() | Out-Null
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
@@ -694,6 +696,20 @@ function Show-FocusSessionForm {
     $cmbKr.Add_SelectedIndexChanged({ &$validateInputs })
     $txtAcc.Add_TextChanged({ &$validateInputs })
     $txtPlan.Add_TextChanged({ &$validateInputs })
+
+    $txtAcc.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            $form.SelectNextControl($txtAcc, $true, $true, $true, $true) | Out-Null
+        }
+    })
+    $txtPlan.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            if ($btnBreak.Enabled) { $btnBreak.Focus() | Out-Null }
+            elseif ($btnEye.Enabled) { $btnEye.Focus() | Out-Null }
+        }
+    })
 
     $chkCont.Add_CheckedChanged({
             $targetTxt = $this.Parent.Controls.Find("txtPlan", $false)[0]
@@ -859,6 +875,7 @@ function Show-ReturnForm($idleMinutes, $isQuickBreak) {
     $btn.Size = New-Object System.Drawing.Size(120, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($btn)
+    $form.AcceptButton = $btn
     
     $form.ShowDialog() | Out-Null
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
@@ -891,6 +908,7 @@ function Show-QuickBreakForm {
     $btn.Size = New-Object System.Drawing.Size(100, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($btn)
+    $form.AcceptButton = $btn
 
     $form.ShowDialog() | Out-Null
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
