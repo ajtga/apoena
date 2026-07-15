@@ -17,6 +17,9 @@ public class Win32 {
     }
 
     [DllImport("user32.dll")]
+    public static extern bool LockWorkStation();
+
+    [DllImport("user32.dll")]
     public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
     [StructLayout(LayoutKind.Sequential)]
     public struct FLASHWINFO {
@@ -51,6 +54,8 @@ $config = if (Test-Path $configPath) { Import-PowerShellDataFile $configPath } e
 
 $focusSessionDuration = if ($config.FocusSessionMinutes) { $config.FocusSessionMinutes * 60 } else { 20 * 60 }   # default: 20 minutes
 $breakDuration = if ($config.BreakDurationSeconds) { $config.BreakDurationSeconds } else { 20 }     # default: 20 seconds
+$quickBreakMinDuration = if ($config.QuickBreakMinMinutes) { $config.QuickBreakMinMinutes * 60 } else { 5 * 60 } # default: 5 minutes
+$pauseMinDuration = if ($config.PauseMinMinutes) { $config.PauseMinMinutes * 60 } else { 5 * 60 } # default: 5 minutes
 $idleThreshold = if ($config.IdleThresholdMinutes) { $config.IdleThresholdMinutes * 60 } else { 15 * 60 } # default: 15 minutes
 $awayReasons = if ($config.AwayReasons) { $config.AwayReasons } else { @("Meeting", "Lunch", "Call", "Offline Work", "Coffee", "Rest", "Distraction", "End of Day", "Other") }
 $quickBreakReasons = if ($config.QuickBreakReasons) { $config.QuickBreakReasons } else { @("Pee", "Poo", "Water", "Coffee", "Snack", "Stretch", "Other") }
@@ -66,6 +71,91 @@ $lastBreak = [DateTime]::Now
 $focusSessionStart = [DateTime]::Now
 
 # --- Helper Functions ---
+function Invoke-EnforcedBreak($durationSecs, $context) {
+    [Win32]::LockWorkStation() | Out-Null
+    
+    if ($durationSecs -le 0) {
+        return
+    }
+
+    $breakStart = [DateTime]::Now
+    $global:sessionUnlocked = $false
+    
+    $handler = Register-ObjectEvent -InputObject ([Microsoft.Win32.SystemEvents]) -EventName "SessionSwitch" -Action {
+        if ($Event.SourceEventArgs.Reason -eq 'SessionUnlock') {
+            $global:sessionUnlocked = $true
+        }
+    }
+
+    try {
+        while ($true) {
+            [System.Windows.Forms.Application]::DoEvents()
+            
+            $elapsed = ([DateTime]::Now - $breakStart).TotalSeconds
+            if ($elapsed -ge $durationSecs) {
+                break
+            }
+            
+            if ($global:sessionUnlocked) {
+                $global:sessionUnlocked = $false
+                $remaining = [math]::Round($durationSecs - $elapsed)
+                
+                $form = New-Object System.Windows.Forms.Form
+                $form.Size = New-Object System.Drawing.Size(350, 180)
+                $form.StartPosition = "CenterScreen"
+                $form.TopMost = $true
+                $form.FormBorderStyle = "FixedDialog"
+                $form.MaximizeBox = $false
+                $form.MinimizeBox = $false
+                
+                if ($context -eq "Pause") {
+                    $form.Text = "Minimum Pause Enforced"
+                } else {
+                    $form.Text = "Break Not Over"
+                }
+                
+                $lbl = New-Object System.Windows.Forms.Label
+                $lbl.Location = New-Object System.Drawing.Point(20, 20)
+                $lbl.Size = New-Object System.Drawing.Size(300, 70)
+                $form.Controls.Add($lbl)
+                
+                $btn = New-Object System.Windows.Forms.Button
+                $btn.Text = "Lock Now"
+                $btn.Location = New-Object System.Drawing.Point(120, 100)
+                $btn.Add_Click({ $form.Close() })
+                $form.Controls.Add($btn)
+                
+                $form.Show()
+                
+                $alertStart = [DateTime]::Now
+                while ($form.Visible) {
+                    [System.Windows.Forms.Application]::DoEvents()
+                    $alertElapsed = ([DateTime]::Now - $alertStart).TotalSeconds
+                    $alertRemaining = 5 - $alertElapsed
+                    if ($alertRemaining -le 0) {
+                        $form.Close()
+                        break
+                    }
+                    if ($context -eq "Pause") {
+                        $lbl.Text = "The minimum pause duration has not elapsed yet. $remaining seconds remaining.`n`nLocking again in $([math]::Ceiling($alertRemaining))s..."
+                    } else {
+                        $lbl.Text = "Your break is not over yet. $remaining seconds remaining.`n`nLocking again in $([math]::Ceiling($alertRemaining))s..."
+                    }
+                    Start-Sleep -Milliseconds 100
+                }
+                
+                $form.Dispose()
+                
+                [Win32]::LockWorkStation() | Out-Null
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    finally {
+        Unregister-Event -SourceIdentifier $handler.Name
+    }
+}
+
 function Get-ScheduleContext {
     $now = Get-Date
     $day = $now.DayOfWeek
@@ -691,45 +781,59 @@ function Show-FocusSessionForm {
     }
 }
 
-function Show-ReturnForm($idleMinutes) {
+function Show-ReturnForm($idleMinutes, $isQuickBreak) {
     $formStart = [DateTime]::Now
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Welcome Back"
-    $form.Size = New-Object System.Drawing.Size(300, 220)
+    if ($isQuickBreak) {
+        $form.Text = "Quick Break Over - Welcome Back!"
+    } else {
+        $form.Text = "Welcome Back - Away Period Logged"
+    }
+    $form.Size = New-Object System.Drawing.Size(300, 260)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
     
+    $lblPlan = New-Object System.Windows.Forms.Label
+    $lblPlan.Text = "You planned to work on next:`n$($global:lastPlannedTask)"
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 10)
+    $lblPlan.Size = New-Object System.Drawing.Size(260, 35)
+    $form.Controls.Add($lblPlan)
+
     $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = "Away for $([math]::Round($idleMinutes)) min. What were you doing?"
-    $lbl.Location = New-Object System.Drawing.Point(10, 10)
+    if ($isQuickBreak) {
+        $lbl.Text = "Break logged. What were you doing?"
+    } else {
+        $lbl.Text = "Away for $([math]::Round($idleMinutes)) min. What were you doing?"
+    }
+    $lbl.Location = New-Object System.Drawing.Point(10, 50)
     $lbl.Size = New-Object System.Drawing.Size(260, 20)
     $form.Controls.Add($lbl)
     
     $cmb = New-Object System.Windows.Forms.ComboBox
     $cmb.Items.AddRange($global:awayReasons)
     $cmb.SelectedIndex = 0
-    $cmb.Location = New-Object System.Drawing.Point(10, 40)
+    $cmb.Location = New-Object System.Drawing.Point(10, 75)
     $cmb.Size = New-Object System.Drawing.Size(260, 20)
     $cmb.DropDownStyle = 'DropDownList'
     $form.Controls.Add($cmb)
 
     $lblNotes = New-Object System.Windows.Forms.Label
     $lblNotes.Text = "Notes:"
-    $lblNotes.Location = New-Object System.Drawing.Point(10, 70)
+    $lblNotes.Location = New-Object System.Drawing.Point(10, 105)
     $lblNotes.AutoSize = $true
     $form.Controls.Add($lblNotes)
 
     $txtNotes = New-Object System.Windows.Forms.TextBox
-    $txtNotes.Location = New-Object System.Drawing.Point(10, 90)
+    $txtNotes.Location = New-Object System.Drawing.Point(10, 125)
     $txtNotes.Size = New-Object System.Drawing.Size(260, 20)
     $form.Controls.Add($txtNotes)
     
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = "Log and Resume"
-    $btn.Location = New-Object System.Drawing.Point(80, 130)
+    $btn.Location = New-Object System.Drawing.Point(80, 165)
     $btn.Size = New-Object System.Drawing.Size(120, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($btn)
@@ -843,10 +947,10 @@ while ($true) {
         Write-Log "Focus Session" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) ""
         
         $pauseStart = [DateTime]::Now
-        [System.Windows.Forms.MessageBox]::Show("Monitoring paused. Click OK when you return to your desk.", "Paused", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        Invoke-EnforcedBreak -durationSecs $pauseMinDuration -context "Pause"
         
         $awaySecs = ([DateTime]::Now - $pauseStart).TotalSeconds
-        $rtn = Show-ReturnForm ($awaySecs / 60)
+        $rtn = Show-ReturnForm ($awaySecs / 60) $false
         Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
         Invoke-EndOfDay $rtn.Reason
         
@@ -866,7 +970,7 @@ while ($true) {
             [System.Windows.Forms.MessageBox]::Show("You've been idle for over 15 minutes. Monitoring paused until you click OK.", "Idle Detected", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             
             $actualAwaySecs = ([DateTime]::Now - $awayStart).TotalSeconds
-            $rtn = Show-ReturnForm ($actualAwaySecs / 60)
+            $rtn = Show-ReturnForm ($actualAwaySecs / 60) $false
             Write-Log "Away" $rtn.Reason $actualAwaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
             Invoke-EndOfDay $rtn.Reason
             
@@ -879,14 +983,15 @@ while ($true) {
     if (([DateTime]::Now - $lastBreak).TotalSeconds -ge $focusSessionDuration) {
         $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
         $result = Show-FocusSessionForm
+        $global:lastPlannedTask = $result.Planned
         Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID
         
         if ($result.Action -eq 'Pause') {
             $pauseStart = [DateTime]::Now
-            [System.Windows.Forms.MessageBox]::Show("Monitoring paused. Click OK when you return to your desk.", "Paused", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+            Invoke-EnforcedBreak -durationSecs $pauseMinDuration -context "Pause"
             
             $awaySecs = ([DateTime]::Now - $pauseStart).TotalSeconds
-            $rtn = Show-ReturnForm ($awaySecs / 60)
+            $rtn = Show-ReturnForm ($awaySecs / 60) $false
             Write-Log "Away" $rtn.Reason $awaySecs "" "" $rtn.Notes $rtn.LogDuration (Get-ScheduleContext) ""
             Invoke-EndOfDay $rtn.Reason
             
@@ -914,8 +1019,10 @@ while ($true) {
                     if ($retry -eq [System.Windows.Forms.DialogResult]::No) {
                         $qbResult = Show-QuickBreakForm
                         $breakStart = [DateTime]::Now
-                        [System.Windows.Forms.MessageBox]::Show("Take your time! Click OK when you return to your desk.", "Quick Break", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-                        Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext) ""
+                        Invoke-EnforcedBreak -durationSecs $quickBreakMinDuration -context "Break"
+                        $awaySecs = ([DateTime]::Now - $breakStart).TotalSeconds
+                        $rtn = Show-ReturnForm ($awaySecs / 60) $true
+                        Write-Log "Quick Break" $qbResult.Type $awaySecs "" "" $rtn.Notes ($rtn.LogDuration + $qbResult.LogDuration) (Get-ScheduleContext) ""
                         $restCompleted = $true
                     }
                     else {
@@ -933,8 +1040,10 @@ while ($true) {
         else {
             $qbResult = Show-QuickBreakForm
             $breakStart = [DateTime]::Now
-            [System.Windows.Forms.MessageBox]::Show("Take your time! Click OK when you return to your desk.", "Quick Break", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-            Write-Log "Quick Break" $qbResult.Type ([DateTime]::Now - $breakStart).TotalSeconds "" "" "" $qbResult.LogDuration (Get-ScheduleContext) ""
+            Invoke-EnforcedBreak -durationSecs $quickBreakMinDuration -context "Break"
+            $awaySecs = ([DateTime]::Now - $breakStart).TotalSeconds
+            $rtn = Show-ReturnForm ($awaySecs / 60) $true
+            Write-Log "Quick Break" $qbResult.Type $awaySecs "" "" $rtn.Notes ($rtn.LogDuration + $qbResult.LogDuration) (Get-ScheduleContext) ""
         }
         
         $lastBreak = [DateTime]::Now
