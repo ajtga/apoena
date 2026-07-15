@@ -1,14 +1,14 @@
 # Apoena
 
-**A Windows PowerShell productivity assistant that enforces the 20-20-20 eye rest rule and logs your work blocks.**
+**A Windows PowerShell productivity assistant that logs your focus sessions and prompts periodic wellness breaks.**
 
-Apoena runs silently in your system tray, monitoring your work routine. Every 20 minutes it prompts you to log what you accomplished and plan your next task, and then enforces a 20-second eye rest — looking 20 feet away. It also detects idle periods automatically, manages quick breaks, and exports a detailed CSV log for personal productivity analysis.
+Apoena runs silently in your system tray, monitoring your work routine. Every 20 minutes it prompts you to log what you accomplished during your focus session and plan your next task, followed by an optional 20-second eye rest break — looking 20 feet (~6 meters) away. It also detects idle periods automatically, manages quick breaks, and exports a detailed CSV log for personal productivity analysis.
 
 ## Features
 
-- **Daily Key Results** — Plan your core objectives at the start of the day and associate each work block with a single Key Result to enforce focus. ([Why multitasking is bad for memory](https://www.healthline.com/health/alzheimers-dementia/multitasking-memory-loss-link))
-- **20-Minute Work Blocks** — Monitors continuous work intervals and prompts you to log accomplishments and plan the next task.
-- **Strict Eye Rest Enforcement** — Requires 20 seconds of no mouse/keyboard input. If movement is detected, the timer restarts or you can opt for a physical break instead. ([Why 20-20-20?](https://www.healthline.com/health/eye-health/20-20-20-rule))
+- **Daily Key Results** — Plan your core objectives at the start of the day and associate each focus session with a single Key Result to enforce single-tasking. ([Why multitasking is bad for memory](https://www.healthline.com/health/alzheimers-dementia/multitasking-memory-loss-link))
+- **Focus Session Logging** — Monitors continuous focus intervals and prompts you to log accomplishments and plan your next task.
+- **Strict Eye Rest Enforcement** — Prompts 20 seconds of no mouse/keyboard input after sessions. If movement is detected, the timer restarts or you can opt for a physical break instead. ([Why 20-20-20?](https://www.healthline.com/health/eye-health/20-20-20-rule))
 - **Categorized Quick Breaks** — Classify short breaks (Water, Coffee, Bathroom, Stretch, etc.) for granular tracking.
 - **Smart Idle Detection** — If the computer is inactive for 15+ minutes, monitoring pauses automatically. On return, you categorize the time away (Meeting, Lunch, Call, etc.).
 - **System Tray Integration** — Runs in the background with a tray icon showing a live countdown. Right-click to pause manually or exit cleanly.
@@ -48,7 +48,7 @@ Once running, Apoena appears as an ℹ️ icon in your system tray with a live c
 
 | Action | How |
 |---|---|
-| **Log a work block** | Wait for the 20-minute popup, fill in what you did and what's next |
+| **Log a focus session** | Wait for the 20-minute popup, fill in what you did and what's next |
 | **Take an eye rest** | Click "Eye Rest (20s)" — look 20 feet away, don't touch the mouse |
 | **Take a quick break** | Click "Quick Break" — pick a category, click OK when you return |
 | **Pause manually** | Right-click the tray icon → "Pause / Log Break" |
@@ -60,8 +60,8 @@ Copy `src/config.example.psd1` to `src/config.psd1` and customize:
 
 ```powershell
 @{
-    # Work block interval in minutes (default: 20)
-    WorkBlockMinutes     = 20
+    # Focus session interval in minutes (default: 20)
+    FocusSessionMinutes  = 20
 
     # Eye rest duration in seconds (default: 20)
     BreakDurationSeconds = 20
@@ -90,17 +90,17 @@ The log file (`apoena-log.csv`) is generated in the same directory as the script
 |---|---|---|
 | `Timestamp` | `yyyy-MM-dd HH:mm:ss` | Exact date and time of the event |
 | `TimezoneOffset` | `±HH:mm` | UTC offset at the time of logging (e.g., `-03:00`) |
-| `EventCategory` | string | Event type: `Work Block`, `Quick Break`, `Eye Rest`, `Away`, `System` |
+| `EventCategory` | string | Event type: `Focus Session`, `Quick Break`, `Eye Rest`, `Away`, `System` |
 | `EventDetail` | string | Subtype or qualifier (e.g., `Complete`, `Water`, `Meeting`, `Started`) |
-| `BlockIndex` | integer | Auto-incrementing block counter (global, across sessions) |
-| `DaySequence` | integer | Block number within the current day (resets at midnight) |
+| `SessionIndex` | integer | Auto-incrementing session counter (global, across sessions) |
+| `DaySequence` | integer | Session number within the current day (resets at midnight) |
 | `DurationSeconds` | integer | Duration of the event in seconds |
-| `Accomplished` | free text | What was completed during the last work block |
+| `Accomplished` | free text | What was completed during the last focus session |
 | `Planned` | free text | What the user plans to do next |
 | `Notes` | free text | Additional observations (e.g., on return from idle) |
 | `LoggingDurationSecs` | integer | Time the user spent with the popup open before submitting |
 | `ScheduleContext` | string | Time-of-day context: `Core Hours`, `Lunch Time`, `Overtime`, `Early Arrival`, `Weekend` |
-| `KeyResultID` | string | The associated Key Result ID for the completed work block (e.g., `KR-1`) |
+| `KeyResultID` | string | The associated Key Result ID for the completed focus session (e.g., `KR-1`) |
 
 ## Contributing
 

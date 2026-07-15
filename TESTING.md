@@ -1,7 +1,7 @@
 # Apoena — Manual Test Plan
 
-Use this checklist after each fix is applied. Set `WorkBlockMinutes = 0.1`
-in `src/config.psd1` to trigger work-block popups quickly (every 6 seconds).
+Use this checklist after each fix is applied. Set `FocusSessionMinutes = 0.1`
+in `src/config.psd1` to trigger focus-session popups quickly (every 6 seconds).
 
 ---
 
@@ -45,7 +45,7 @@ space and no missing character.
 4. Exit the first instance (tray → Exit).
 5. Launch again.
 
-- [x] Apoena starts normally — the mutex was released.
+- [x] Apoena starts normally — the mutex (`Global\ApoenaMutex`) was released.
 
 ---
 
@@ -57,14 +57,14 @@ even on systems where the locale uses a comma.
 ### Steps
 
 1. Open `src/apoena.ps1` and temporarily add the following line right after
-   `$scriptDir = ...` (line 22):
+   `$scriptDir = ...` (line 35):
 
    ```powershell
    [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::new("pt-BR")
    ```
 
 2. Launch Apoena.
-3. Wait for a work block popup, fill it in, and click **Eye Rest (20s)**.
+3. Wait for a focus session popup, fill it in, and click **Eye Rest (20s)**.
 4. Complete the eye rest.
 5. Exit Apoena (tray → Exit).
 6. Open `src/apoena-log.csv` in a **plain text editor** (not Excel).
@@ -73,7 +73,7 @@ even on systems where the locale uses a comma.
 
 - [ ] `DurationSeconds` values use a dot: e.g. `6.123`, not `6,123`.
 - [ ] `LoggingDurationSecs` values use a dot.
-- [ ] The CSV has exactly **12 columns per row** (matching the header).
+- [ ] The CSV has exactly **13 columns per row** (matching the header).
 - [ ] Opening the CSV in Excel shows all columns aligned correctly.
 
 ### Cleanup
@@ -89,8 +89,8 @@ break the CSV column structure.
 
 ### Steps
 
-1. Launch Apoena with `WorkBlockMinutes = 0.1`.
-2. When the work block popup appears, type the following into the
+1. Launch Apoena with `FocusSessionMinutes = 0.1`.
+2. When the focus session popup appears, type the following into the
    **"What did you accomplish?"** field:
 
    ```
@@ -112,7 +112,7 @@ break the CSV column structure.
 - [x] The Accomplished column contains:
       `"Fixed bug, refactored ""parser"", done"`
 - [x] The Planned column contains: `"Review PR #42, merge"`
-- [x] The row still has exactly **12 comma-separated fields** (commas inside
+- [x] The row still has exactly **13 comma-separated fields** (commas inside
       quotes do not count as delimiters).
 - [x] Opening the CSV in Excel shows the text intact in the correct columns.
 
@@ -126,8 +126,8 @@ previous session.
 
 ### Steps — Same-day restart
 
-1. Launch Apoena and let at least one work block complete (note the
-   `BlockIndex` and `DaySequence` in the CSV).
+1. Launch Apoena and let at least one focus session complete (note the
+   `SessionIndex` and `DaySequence` in the CSV).
 2. Exit Apoena (tray → Exit).
 3. Re-launch Apoena immediately (same day).
 
@@ -138,7 +138,7 @@ previous session.
 - [x] The form has a free-text input and a **Resume** button.
 - [x] After clicking Resume, the CSV contains a new row with
       `EventCategory = System` and `EventDetail = Resumed`.
-- [x] The `BlockIndex` and `DaySequence` in the new rows continue from the
+- [x] The `SessionIndex` and `DaySequence` in the new rows continue from the
       values logged before the exit (not reset to 1).
 
 ### Steps — New-day start
@@ -150,7 +150,7 @@ previous session.
 
 - [x] The standard welcome message appears:
       *"Welcome to Apoena! Have a great day at work..."*
-- [x] `BlockIndex` continues from the last logged block index in the CSV (e.g., if the last logged index was 4, it resumes at 5).
+- [x] `SessionIndex` continues from the last logged session index in the CSV (e.g., if the last logged index was 4, it resumes at 5).
 - [x] `DaySequence` starts from 1.
 
 ### Steps — Fresh Start (No prior logs)
@@ -162,13 +162,13 @@ previous session.
 
 - [x] The standard welcome message appears:
       *"Welcome to Apoena! Have a great day at work..."*
-- [x] Both `BlockIndex` and `DaySequence` start from 1.
+- [x] Both `SessionIndex` and `DaySequence` start from 1.
 
 ---
 
 ## Issue #6 — Daily Key Results Module
 
-**Goal:** The user must define at least one Key Result (KR) to start/proceed with their day. Work blocks cannot be completed without associating them with a Key Result. Key results can be added dynamically and are logged to `src/apoena-krs-log.csv`.
+**Goal:** The user must define at least one Key Result (KR) to start/proceed with their day. Focus sessions cannot be completed without associating them with a Key Result. Key results can be added dynamically and are logged to `src/apoena-krs-log.csv`.
 
 ### Steps — Daily Planning Prompt & Validation on Startup
 
@@ -221,10 +221,10 @@ previous session.
 - [x] The new KR is saved to `src/apoena-krs-log.csv` as `KR-2`.
 - [x] The planning form closes successfully.
 
-### Steps — Work Block KR Selection & On-the-fly Adding
+### Steps — Focus Session KR Selection & On-the-fly Adding
 
-17. Set `WorkBlockMinutes = 0.1` in `src/config.psd1` (so work blocks finish in 6 seconds).
-18. Launch/restart Apoena and wait for the work block popup to appear.
+17. Set `FocusSessionMinutes = 0.1` in `src/config.psd1` (so focus sessions finish in 6 seconds).
+18. Launch/restart Apoena and wait for the focus session popup to appear.
 19. Observe that the log action buttons (**Eye Rest (20s)**, **Quick Break**, **Pause / Away**) are disabled by default.
 20. Select `KR-1` from the dropdown.
 21. Observe that the log action buttons become enabled.
@@ -235,6 +235,30 @@ previous session.
 
 - [x] The quick add form closes.
 - [x] The new KR is registered in `src/apoena-krs-log.csv` as `KR-3`.
-- [x] The dropdown in the work block form updates and automatically selects the newly created KR.
+- [x] The dropdown in the focus session form updates and automatically selects the newly created KR.
 - [x] Click **Eye Rest (20s)** and complete it.
-- [x] Open `src/apoena-log.csv` in a text editor and verify that the final column of the logged work block contains `KR-3`.
+- [x] Open `src/apoena-log.csv` in a text editor and verify that the final column of the logged focus session contains `KR-3`.
+
+---
+
+## Issue #7 — Focus Session Positioning & Terminology Refactoring
+
+**Goal:** Emphasize Focus Session logging and Key Results tracking as the protagonist of Apoena, renaming all UI popups, messages, CSV logging categories, config keys, and documentation to "Focus Session".
+
+### Steps — Verification of Focus Session Logging & Configuration
+
+1. Set `FocusSessionMinutes = 0.1` in `src/config.psd1`.
+2. Launch Apoena (`start-apoena.cmd`).
+3. Observe the welcome dialog header and body:
+   - Contains: *"Your first focus session has started and will last for 00:06."*
+4. Select `KR-1` on startup, start the session, and wait 6 seconds for the focus session popup.
+5. Observe the popup title bar:
+   - Reads: **Focus Session Complete! (00:06)**
+6. Select a KR, fill in accomplishment/plan, and complete an eye rest.
+7. Open `src/apoena-log.csv` in a plain text editor.
+
+### Expected Result
+
+- [x] The CSV header row contains `SessionIndex` (column 5) instead of `BlockIndex`.
+- [x] The logged event row contains `EventCategory = Focus Session`.
+- [x] No instances of `Work Block`, `WorkBlockMinutes`, `blockIndex`, or `Global\ApoenaEyeRestMutex` remain in code or logs.

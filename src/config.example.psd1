@@ -3,8 +3,8 @@
 # Any setting omitted from config.psd1 will use its default value.
 
 @{
-    # Work block interval in minutes (default: 20)
-    WorkBlockMinutes     = 20
+    # Focus session interval in minutes (default: 20)
+    FocusSessionMinutes  = 20
 
     # Eye rest duration in seconds (default: 20)
     BreakDurationSeconds = 20

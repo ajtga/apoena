@@ -3,8 +3,9 @@
 ## Project Overview
 
 Apoena is a single-script Windows Forms productivity tool written in PowerShell.
-It enforces the 20-20-20 eye rest rule, logs work blocks to a local CSV, and
-runs silently in the system tray.
+It logs focus sessions to a local CSV, enforces focus via Daily Key Results,
+suggests periodic wellness breaks (including 20-20-20 eye rests), and runs
+silently in the system tray.
 
 ## Runtime & Dependencies
 
@@ -53,7 +54,7 @@ runs silently in the system tray.
 ## Concurrency
 
 - **Single instance:** Only one Apoena process may run at a time. This is
-  enforced via a named Mutex (`Global\ApoenaEyeRestMutex`). The mutex must
+  enforced via a named Mutex (`Global\ApoenaMutex`). The mutex must
   remain held for the entire lifetime of the process.
 - **Log writer:** Only the single running instance writes to `apoena-log.csv`.
   No file-locking mechanism is used beyond the single-instance guarantee.
@@ -76,4 +77,4 @@ runs silently in the system tray.
 
 ## Development & Execution
 
-- **Background GUI Tasks:** Avoid launching interactive/GUI scripts (like `apoena.ps1`) in the background, since the agent cannot interact with the GUI and it locks global resources. If you must run the application for startup verification, always ensure you terminate/kill the background task immediately afterward to release the global mutex (`Global\ApoenaEyeRestMutex`) and prevent blocking the user.
+- **Background GUI Tasks:** Avoid launching interactive/GUI scripts (like `apoena.ps1`) in the background, since the agent cannot interact with the GUI and it locks global resources. If you must run the application for startup verification, always ensure you terminate/kill the background task immediately afterward to release the global mutex (`Global\ApoenaMutex`) and prevent blocking the user.

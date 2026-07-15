@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# Apoena - 20-20-20 Eye Rest & Work Block Logger
+# Apoena - Focus Session Logger & Wellness Reminder
 # https://github.com/<YOUR_USER>/apoena
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -20,7 +20,7 @@ public class Win32 {
 
 # --- Single Instance Guard ---
 $createdNew = $false
-$global:mutex = New-Object System.Threading.Mutex($true, "Global\ApoenaEyeRestMutex", [ref]$createdNew)
+$global:mutex = New-Object System.Threading.Mutex($true, "Global\ApoenaMutex", [ref]$createdNew)
 if (-not $createdNew) {
     [System.Windows.Forms.MessageBox]::Show(
         "Apoena is already running in the system tray.",
@@ -36,7 +36,7 @@ $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $configPath = Join-Path $scriptDir "config.psd1"
 $config = if (Test-Path $configPath) { Import-PowerShellDataFile $configPath } else { @{} }
 
-$workBlockDuration = if ($config.WorkBlockMinutes) { $config.WorkBlockMinutes * 60 } else { 20 * 60 }   # default: 20 minutes
+$focusSessionDuration = if ($config.FocusSessionMinutes) { $config.FocusSessionMinutes * 60 } else { 20 * 60 }   # default: 20 minutes
 $breakDuration = if ($config.BreakDurationSeconds) { $config.BreakDurationSeconds } else { 20 }     # default: 20 seconds
 $idleThreshold = if ($config.IdleThresholdMinutes) { $config.IdleThresholdMinutes * 60 } else { 15 * 60 } # default: 15 minutes
 $awayReasons = if ($config.AwayReasons) { $config.AwayReasons } else { @("Meeting", "Lunch", "Call", "Offline Work", "Coffee", "Rest", "Distraction", "End of Day", "Other") }
@@ -46,11 +46,11 @@ $logFile = Join-Path $scriptDir "apoena-log.csv"
 $krsLogFile = Join-Path $scriptDir "apoena-krs-log.csv"
 
 $global:manualInterrupt = $false
-$global:blockIndex = 0
+$global:sessionIndex = 0
 $global:daySequence = 0
 $global:lastLogDate = (Get-Date).Date
 $lastBreak = [DateTime]::Now
-$workBlockStart = [DateTime]::Now
+$focusSessionStart = [DateTime]::Now
 
 # --- Helper Functions ---
 function Get-ScheduleContext {
@@ -84,7 +84,7 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $global:lastLogDate = $logDate
     }
 
-    $global:blockIndex++
+    $global:sessionIndex++
     $global:daySequence++
 
     $stamp = if ($customTimestamp) { $customTimestamp } else { (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
@@ -106,7 +106,7 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $tzOffset,
         $safeCategory,
         $safeDetail,
-        $global:blockIndex.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        $global:sessionIndex.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         $global:daySequence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         $duration,
         $safeAccomplished,
@@ -201,7 +201,7 @@ if (-not (Test-Path $krsLogFile)) {
 }
 
 if (-not (Test-Path $logFile)) {
-    "Timestamp,TimezoneOffset,EventCategory,EventDetail,BlockIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID" | Out-File $logFile -Encoding UTF8
+    "Timestamp,TimezoneOffset,EventCategory,EventDetail,SessionIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID" | Out-File $logFile -Encoding UTF8
 }
 else {
     $firstLine = Get-Content $logFile -TotalCount 1
@@ -221,11 +221,11 @@ else {
             $lastDate = [datetime]::ParseExact($lastTimestamp, "yyyy-MM-dd HH:mm:ss", $null).Date
             if ($lastDate -eq (Get-Date).Date) {
                 $isSameDayRestart = $true
-                $global:blockIndex = [int]$parts[4]
+                $global:sessionIndex = [int]$parts[4]
                 $global:daySequence = [int]$parts[5]
             }
             else {
-                $global:blockIndex = [int]$parts[4]
+                $global:sessionIndex = [int]$parts[4]
                 $global:daySequence = [int]$parts[5]
                 $global:lastLogDate = $lastDate
             }
@@ -454,11 +454,11 @@ function Show-ResumedSessionForm {
     return @{ Context = $txtContext.Text; LogDuration = $logDur }
 }
 
-function Show-WorkBlockForm {
+function Show-FocusSessionForm {
     $formStart = [DateTime]::Now
     $form = New-Object System.Windows.Forms.Form
-    $blockTimeStr = Get-FormattedDuration $workBlockDuration
-    $form.Text = "Work Block Complete! ($blockTimeStr)"
+    $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
+    $form.Text = "Focus Session Complete! ($focusSessionTimeStr)"
     $form.Size = New-Object System.Drawing.Size(430, 310)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
@@ -709,12 +709,12 @@ Write-Log "System" "Started" 0 "" "" "" 0 (Get-ScheduleContext) ""
 if ($isSameDayRestart) {
     $resumed = Show-ResumedSessionForm
     Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext) ""
-    $blockTimeStr = Get-FormattedDuration $workBlockDuration
-    [System.Windows.Forms.MessageBox]::Show("Your next work block has started! It will last for $blockTimeStr.", "Work Block Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
+    [System.Windows.Forms.MessageBox]::Show("Your next focus session has started! It will last for $focusSessionTimeStr.", "Focus Session Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 else {
-    $blockTimeStr = Get-FormattedDuration $workBlockDuration
-    [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work.`n`nI'll monitor your routine and remind you to take breaks. Your first work block has started and will last for $blockTimeStr.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
+    [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work.`n`nI'll monitor your routine and remind you to take breaks. Your first focus session has started and will last for $focusSessionTimeStr.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 
 $todayKrs = Get-TodayKeyResults
@@ -736,7 +736,7 @@ while ($true) {
     
     # Update Tray Icon Tooltip with remaining time
     $elapsedSecs = ([DateTime]::Now - $lastBreak).TotalSeconds
-    $remainingSecs = [math]::Max(0, $workBlockDuration - $elapsedSecs)
+    $remainingSecs = [math]::Max(0, $focusSessionDuration - $elapsedSecs)
     $ts = [TimeSpan]::FromSeconds($remainingSecs)
     $timeStr = if ($ts.TotalHours -ge 1) { $ts.ToString('hh\:mm\:ss') } else { $ts.ToString('mm\:ss') }
     $trayIcon.Text = "Apoena - $timeStr remaining"
@@ -746,8 +746,8 @@ while ($true) {
     
     # 1. Check for manual tray interruption
     if ($global:manualInterrupt) {
-        $workedSecs = ([DateTime]::Now - $workBlockStart).TotalSeconds
-        Write-Log "Work Block" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) ""
+        $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
+        Write-Log "Focus Session" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) ""
         
         $pauseStart = [DateTime]::Now
         [System.Windows.Forms.MessageBox]::Show("Monitoring paused. Click OK when you return to your desk.", "Paused", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
@@ -758,7 +758,7 @@ while ($true) {
         Invoke-EndOfDay $rtn.Reason
         
         $lastBreak = [DateTime]::Now
-        $workBlockStart = [DateTime]::Now
+        $focusSessionStart = [DateTime]::Now
         $global:manualInterrupt = $false
     }
     
@@ -767,9 +767,9 @@ while ($true) {
         $idleSeconds = ([Environment]::TickCount - $lii.dwTime) / 1000
         if ($idleSeconds -ge $idleThreshold) {
             $awayStart = [DateTime]::Now.AddSeconds(-$idleSeconds)
-            $workedSecs = ($awayStart - $workBlockStart).TotalSeconds
+            $workedSecs = ($awayStart - $focusSessionStart).TotalSeconds
             
-            Write-Log "Work Block" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext) ""
+            Write-Log "Focus Session" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext) ""
             [System.Windows.Forms.MessageBox]::Show("You've been idle for over 15 minutes. Monitoring paused until you click OK.", "Idle Detected", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             
             $actualAwaySecs = ([DateTime]::Now - $awayStart).TotalSeconds
@@ -778,15 +778,15 @@ while ($true) {
             Invoke-EndOfDay $rtn.Reason
             
             $lastBreak = [DateTime]::Now
-            $workBlockStart = [DateTime]::Now
+            $focusSessionStart = [DateTime]::Now
         }
     }
 
-    # 3. Standard 20-minute interval check
-    if (([DateTime]::Now - $lastBreak).TotalSeconds -ge $workBlockDuration) {
-        $workedSecs = ([DateTime]::Now - $workBlockStart).TotalSeconds
-        $result = Show-WorkBlockForm
-        Write-Log "Work Block" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID
+    # 3. Standard interval check
+    if (([DateTime]::Now - $lastBreak).TotalSeconds -ge $focusSessionDuration) {
+        $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
+        $result = Show-FocusSessionForm
+        Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID
         
         if ($result.Action -eq 'Pause') {
             $pauseStart = [DateTime]::Now
@@ -845,7 +845,7 @@ while ($true) {
         }
         
         $lastBreak = [DateTime]::Now
-        $workBlockStart = [DateTime]::Now
+        $focusSessionStart = [DateTime]::Now
     }
     Start-Sleep -Milliseconds 1000
 }
