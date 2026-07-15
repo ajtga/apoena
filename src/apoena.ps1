@@ -464,7 +464,9 @@ function Show-FocusSessionForm {
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
-    
+    $form.MinimizeBox = $false
+    $form.ControlBox = $false
+
     $lblKr = New-Object System.Windows.Forms.Label
     $lblKr.Text = "Which Key Result did you focus on?"
     $lblKr.Location = New-Object System.Drawing.Point(10, 10)
@@ -531,6 +533,44 @@ function Show-FocusSessionForm {
     $chkCont.Text = "Continue previous task"
     $chkCont.Location = New-Object System.Drawing.Point(10, 160)
     $chkCont.Size = New-Object System.Drawing.Size(200, 20)
+    $form.Controls.Add($chkCont)
+    
+    $btnEye = New-Object System.Windows.Forms.Button
+    $btnEye.Text = "Eye Rest (20s)"
+    $btnEye.Location = New-Object System.Drawing.Point(20, 210)
+    $btnEye.Size = New-Object System.Drawing.Size(120, 40)
+    $btnEye.Enabled = $false
+    $form.Controls.Add($btnEye)
+    
+    $btnBreak = New-Object System.Windows.Forms.Button
+    $btnBreak.Text = "Quick Break"
+    $btnBreak.Location = New-Object System.Drawing.Point(145, 210)
+    $btnBreak.Size = New-Object System.Drawing.Size(120, 40)
+    $btnBreak.Enabled = $false
+    $form.Controls.Add($btnBreak)
+
+    $btnPause = New-Object System.Windows.Forms.Button
+    $btnPause.Text = "Pause / Away"
+    $btnPause.Location = New-Object System.Drawing.Point(270, 210)
+    $btnPause.Size = New-Object System.Drawing.Size(120, 40)
+    $btnPause.Enabled = $false
+    $form.Controls.Add($btnPause)
+
+    # --- Input Validation ---
+    $validateInputs = {
+        $hasKr   = ($cmbKr.SelectedIndex -ge 0)
+        $hasAcc  = (-not [string]::IsNullOrWhiteSpace($txtAcc.Text))
+        $hasPlan = ($chkCont.Checked -or (-not [string]::IsNullOrWhiteSpace($txtPlan.Text)))
+        $valid   = ($hasKr -and $hasAcc -and $hasPlan)
+        $btnEye.Enabled   = $valid
+        $btnBreak.Enabled = $valid
+        $btnPause.Enabled = $valid
+    }
+
+    $cmbKr.Add_SelectedIndexChanged({ &$validateInputs })
+    $txtAcc.Add_TextChanged({ &$validateInputs })
+    $txtPlan.Add_TextChanged({ &$validateInputs })
+
     $chkCont.Add_CheckedChanged({
             $targetTxt = $this.Parent.Controls.Find("txtPlan", $false)[0]
             if ($this.Checked) {
@@ -541,38 +581,32 @@ function Show-FocusSessionForm {
                 $targetTxt.Enabled = $true
                 $targetTxt.Text = ""
             }
+            &$validateInputs
         })
-    $form.Controls.Add($chkCont)
-    
-    $btnEye = New-Object System.Windows.Forms.Button
-    $btnEye.Text = "Eye Rest (20s)"
-    $btnEye.Location = New-Object System.Drawing.Point(20, 210)
-    $btnEye.Size = New-Object System.Drawing.Size(120, 40)
-    $btnEye.DialogResult = [System.Windows.Forms.DialogResult]::Yes
-    $btnEye.Enabled = ($cmbKr.Items.Count -gt 0 -and $cmbKr.SelectedIndex -ge 0)
-    $form.Controls.Add($btnEye)
-    
-    $btnBreak = New-Object System.Windows.Forms.Button
-    $btnBreak.Text = "Quick Break"
-    $btnBreak.Location = New-Object System.Drawing.Point(145, 210)
-    $btnBreak.Size = New-Object System.Drawing.Size(120, 40)
-    $btnBreak.DialogResult = [System.Windows.Forms.DialogResult]::No
-    $btnBreak.Enabled = $btnEye.Enabled
-    $form.Controls.Add($btnBreak)
 
-    $btnPause = New-Object System.Windows.Forms.Button
-    $btnPause.Text = "Pause / Away"
-    $btnPause.Location = New-Object System.Drawing.Point(270, 210)
-    $btnPause.Size = New-Object System.Drawing.Size(120, 40)
-    $btnPause.DialogResult = [System.Windows.Forms.DialogResult]::Abort
-    $btnPause.Enabled = $btnEye.Enabled
-    $form.Controls.Add($btnPause)
-    
-    $cmbKr.Add_SelectedIndexChanged({
-            $hasSel = ($this.SelectedIndex -ge 0)
-            $btnEye.Enabled = $hasSel
-            $btnBreak.Enabled = $hasSel
-            $btnPause.Enabled = $hasSel
+    # --- Block Alt+F4 and programmatic close ---
+    $global:isValidSubmit = $false
+
+    $form.Add_FormClosing({
+            if ($global:isValidSubmit -ne $true) {
+                $_.Cancel = $true
+            }
+        })
+
+    # --- Action button handlers (set sentinel, then close) ---
+    $btnEye.Add_Click({
+            $global:isValidSubmit = $true
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+        })
+
+    $btnBreak.Add_Click({
+            $global:isValidSubmit = $true
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::No
+        })
+
+    $btnPause.Add_Click({
+            $global:isValidSubmit = $true
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::Abort
         })
 
     $result = $form.ShowDialog()
