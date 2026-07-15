@@ -179,7 +179,7 @@ function ConvertTo-CsvSafe($text) {
     return "`"$escaped`""
 }
 
-function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId, $customTimestamp = $null, $isDistraction = $false) {
+function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $planned, $notes, $logDurSecs, $context, $keyResultId, $customTimestamp = $null, $isDistraction = $false, $globalId = "") {
     # Reset day sequence at midnight
     $logDate = if ($customTimestamp) { [datetime]::ParseExact($customTimestamp, "yyyy-MM-dd HH:mm:ss", $null).Date } else { (Get-Date).Date }
     if ($logDate -ne $global:lastLogDate) {
@@ -218,7 +218,8 @@ function Write-Log($eventCategory, $eventDetail, $durationSecs, $accomplished, $
         $logDur,
         $safeContext,
         (ConvertTo-CsvSafe $keyResultId),
-        (ConvertTo-CsvSafe $isDistraction.ToString())
+        (ConvertTo-CsvSafe $isDistraction.ToString()),
+        (ConvertTo-CsvSafe $globalId.ToString())
     )
     $row = $fields -join ','
 
@@ -255,68 +256,190 @@ function Get-FormattedDuration($seconds) {
     }
 }
 
-function Get-TodayKeyResults {
-    if (-not (Test-Path $krsLogFile)) { return @() }
-    $todayStr = (Get-Date).ToString("yyyy-MM-dd")
+function Get-AllKeyResultsMap {
+    if (-not (Test-Path $krsLogFile)) { return @{} }
     $content = Get-Content $krsLogFile | Select-Object -Skip 1
-    $krs = @()
+    $map = @{}
     foreach ($line in $content) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        # Split by comma but respect quotes. Since we only have 5 columns and no internal commas in first 3, it's safe to use a basic parse or regex.
-        # But a robust approach is to let ConvertFrom-Csv handle it.
         try {
-            $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description"
-            if ($parsed.Date -eq $todayStr) {
-                $krs += $parsed
+            $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description", "Status", "GlobalID"
+            $status = if ($parsed.Status) { $parsed.Status } else { "Active" }
+            $gIdVal = $parsed.GlobalID
+            if (-not [string]::IsNullOrWhiteSpace($gIdVal)) {
+                $gId = [int]$gIdVal
+                $map[$gId] = @{
+                    Timestamp   = $parsed.Timestamp
+                    Date        = $parsed.Date
+                    KeyResultID = $parsed.KeyResultID
+                    Category    = $parsed.Category
+                    Description = $parsed.Description
+                    Status      = $status
+                    GlobalID    = $gId
+                }
             }
         }
         catch { }
     }
+    return $map
+}
+
+function Get-TodayKeyResults($includeCompleted = $false) {
+    if (-not (Test-Path $krsLogFile)) { return @() }
+    $todayStr = (Get-Date).ToString("yyyy-MM-dd")
+    $map = Get-AllKeyResultsMap
+    
+    $todayGlobalIds = @{}
+    $content = Get-Content $krsLogFile | Select-Object -Skip 1
+    foreach ($line in $content) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try {
+            $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description", "Status", "GlobalID"
+            if ($parsed.Date -eq $todayStr -and $parsed.GlobalID) {
+                $todayGlobalIds[[int]$parsed.GlobalID] = $parsed.KeyResultID
+            }
+        }
+        catch { }
+    }
+    
+    $krs = @()
+    foreach ($gId in $todayGlobalIds.Keys) {
+        $gIdInt = [int]$gId
+        $latest = $map[$gIdInt]
+        if ($latest -and ($includeCompleted -or $latest.Status -eq 'Active')) {
+            $krCopy = @{
+                Timestamp   = $latest.Timestamp
+                Date        = $latest.Date
+                KeyResultID = $todayGlobalIds[$gIdInt]
+                Category    = $latest.Category
+                Description = $latest.Description
+                Status      = $latest.Status
+                GlobalID    = $gIdInt
+            }
+            $krs += [PSCustomObject]$krCopy
+        }
+    }
     return $krs
 }
 
-function Add-KeyResult($category, $description) {
-    $todayKrs = Get-TodayKeyResults
-    $maxId = 0
-    foreach ($kr in $todayKrs) {
-        if ($kr.KeyResultID -match 'KR-(\d+)') {
-            $idNum = [int]$matches[1]
-            if ($idNum -gt $maxId) { $maxId = $idNum }
+function Add-KeyResult($category, $description, $globalId = $null, $status = "Active") {
+    $map = Get-AllKeyResultsMap
+    $newGlobalId = $globalId
+    if ($null -eq $newGlobalId) {
+        $maxGlobalId = 0
+        foreach ($gId in $map.Keys) {
+            if ($gId -gt $maxGlobalId) { $maxGlobalId = $gId }
+        }
+        $newGlobalId = $maxGlobalId + 1
+    }
+
+    $todayStr = (Get-Date).ToString("yyyy-MM-dd")
+    $existingTodayKr = $null
+    if ($null -ne $globalId) {
+        if (-not (Test-Path $krsLogFile)) { $existingTodayKr = $null }
+        else {
+            $content = Get-Content $krsLogFile | Select-Object -Skip 1
+            foreach ($line in $content) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description", "Status", "GlobalID"
+                    if ($parsed.Date -eq $todayStr -and $parsed.GlobalID -eq $globalId) {
+                        $existingTodayKr = $parsed.KeyResultID
+                        break
+                    }
+                } catch {}
+            }
         }
     }
-    $newIdNum = $maxId + 1
-    $newId = "KR-$newIdNum"
+
+    $krId = $existingTodayKr
+    if ($null -eq $krId) {
+        $maxTodayIndex = 0
+        if (Test-Path $krsLogFile) {
+            $content = Get-Content $krsLogFile | Select-Object -Skip 1
+            foreach ($line in $content) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description", "Status", "GlobalID"
+                    if ($parsed.Date -eq $todayStr -and $parsed.KeyResultID -match 'KR-(\d+)') {
+                        $idx = [int]$matches[1]
+                        if ($idx -gt $maxTodayIndex) { $maxTodayIndex = $idx }
+                    }
+                } catch {}
+            }
+        }
+        $nextIdx = $maxTodayIndex + 1
+        $krId = "KR-$nextIdx"
+    }
+
     $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     $dateStr = (Get-Date).ToString("yyyy-MM-dd")
     
     $safeCat = ConvertTo-CsvSafe $category
     $safeDesc = ConvertTo-CsvSafe $description
+    $safeStatus = ConvertTo-CsvSafe $status
     
-    $row = "$stamp,$dateStr,$newId,$safeCat,$safeDesc"
+    $row = "$stamp,$dateStr,$krId,$safeCat,$safeDesc,$safeStatus,$newGlobalId"
     $row | Out-File $krsLogFile -Append -Encoding UTF8
     
-    return $newId
+    return $krId
 }
 
 # --- Initialization, Crash Detection & Same-Day Restart ---
 $isSameDayRestart = $false
 if (-not (Test-Path $krsLogFile)) {
-    "Timestamp,Date,KeyResultID,Category,Description" | Out-File $krsLogFile -Encoding UTF8
+    "Timestamp,Date,KeyResultID,Category,Description,Status,GlobalID" | Out-File $krsLogFile -Encoding UTF8
+}
+else {
+    $firstLine = Get-Content $krsLogFile -TotalCount 1
+    if ($firstLine -notmatch "Status" -or $firstLine -notmatch "GlobalID") {
+        $content = Get-Content $krsLogFile
+        $content[0] = "Timestamp,Date,KeyResultID,Category,Description,Status,GlobalID"
+        
+        $uniqueKrs = @{}
+        $globalCounter = 1
+        
+        for ($i = 1; $i -lt $content.Count; $i++) {
+            $line = $content[$i]
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $parsed = $line | ConvertFrom-Csv -Header "Timestamp", "Date", "KeyResultID", "Category", "Description", "Status", "GlobalID"
+                $descKey = "$($parsed.Category)|$($parsed.Description)"
+                if (-not $uniqueKrs.ContainsKey($descKey)) {
+                    $uniqueKrs[$descKey] = $globalCounter
+                    $globalCounter++
+                }
+                $gId = $uniqueKrs[$descKey]
+                $status = if ($parsed.Status) { $parsed.Status } else { "Active" }
+                $safeCategory = ConvertTo-CsvSafe $parsed.Category
+                $safeDesc = ConvertTo-CsvSafe $parsed.Description
+                $content[$i] = "$($parsed.Timestamp),$($parsed.Date),$($parsed.KeyResultID),$safeCategory,$safeDesc,$status,$gId"
+            } catch {
+                $content[$i] = $line + ",Active,1"
+            }
+        }
+        $content | Set-Content $krsLogFile -Encoding UTF8
+    }
 }
 
 if (-not (Test-Path $logFile)) {
-    "Timestamp,TimezoneOffset,EventCategory,EventDetail,SessionIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID,IsDistraction" | Out-File $logFile -Encoding UTF8
+    "Timestamp,TimezoneOffset,EventCategory,EventDetail,SessionIndex,DaySequence,DurationSeconds,Accomplished,Planned,Notes,LoggingDurationSecs,ScheduleContext,KeyResultID,IsDistraction,GlobalID" | Out-File $logFile -Encoding UTF8
 }
 else {
     $firstLine = Get-Content $logFile -TotalCount 1
     if ($firstLine -notmatch "KeyResultID") {
         $content = Get-Content $logFile
-        $content[0] = $content[0] + ",KeyResultID,IsDistraction"
+        $content[0] = $content[0] + ",KeyResultID,IsDistraction,GlobalID"
         $content | Set-Content $logFile -Encoding UTF8
     }
     elseif ($firstLine -notmatch "IsDistraction") {
         $content = Get-Content $logFile
-        $content[0] = $content[0] + ",IsDistraction"
+        $content[0] = $content[0] + ",IsDistraction,GlobalID"
+        $content | Set-Content $logFile -Encoding UTF8
+    }
+    elseif ($firstLine -notmatch "GlobalID") {
+        $content = Get-Content $logFile
+        $content[0] = $content[0] + ",GlobalID"
         $content | Set-Content $logFile -Encoding UTF8
     }
 
@@ -363,7 +486,7 @@ else {
 function Show-KeyResultsForm {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Daily Key Results Planning"
-    $form.Size = New-Object System.Drawing.Size(420, 320)
+    $form.Size = New-Object System.Drawing.Size(420, 380)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
@@ -382,9 +505,10 @@ function Show-KeyResultsForm {
     
     $loadKrs = {
         $lstKrs.Items.Clear()
-        $krs = Get-TodayKeyResults
+        $krs = Get-TodayKeyResults -IncludeCompleted $true
         foreach ($kr in $krs) {
-            $lstKrs.Items.Add("[$($kr.KeyResultID)] ($($kr.Category)) $($kr.Description)") | Out-Null
+            $statusPrefix = if ($kr.Status -eq 'Done') { "[Done] " } else { "" }
+            $lstKrs.Items.Add("$statusPrefix[$($kr.KeyResultID)] ($($kr.Category)) $($kr.Description)") | Out-Null
         }
     }
     &$loadKrs
@@ -415,6 +539,46 @@ function Show-KeyResultsForm {
     $txtDesc.Size = New-Object System.Drawing.Size(170, 20)
     $form.Controls.Add($txtDesc)
 
+    $lblPrev = New-Object System.Windows.Forms.Label
+    $lblPrev.Text = "Activate Unfinished Key Result:"
+    $lblPrev.Location = New-Object System.Drawing.Point(10, 195)
+    $lblPrev.AutoSize = $true
+    $form.Controls.Add($lblPrev)
+
+    $cmbPrev = New-Object System.Windows.Forms.ComboBox
+    $cmbPrev.Location = New-Object System.Drawing.Point(10, 215)
+    $cmbPrev.Size = New-Object System.Drawing.Size(300, 20)
+    $cmbPrev.DropDownStyle = 'DropDownList'
+    $form.Controls.Add($cmbPrev)
+
+    $btnActivate = New-Object System.Windows.Forms.Button
+    $btnActivate.Text = "Activate"
+    $btnActivate.Location = New-Object System.Drawing.Point(320, 213)
+    $btnActivate.Size = New-Object System.Drawing.Size(70, 24)
+    $form.Controls.Add($btnActivate)
+
+    $loadPrevKrs = {
+        $cmbPrev.Items.Clear()
+        $map = Get-AllKeyResultsMap
+        $todayIds = @{}
+        $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+        foreach ($kr in $todayKrs) {
+            $todayIds[$kr.GlobalID] = $true
+        }
+        
+        $unfinished = $map.Values | Where-Object { $_.Status -eq 'Active' -and -not $todayIds[$_.GlobalID] }
+        foreach ($kr in $unfinished) {
+            $cmbPrev.Items.Add("[Global ID: $($kr.GlobalID)] ($($kr.Category)) $($kr.Description)") | Out-Null
+        }
+        if ($cmbPrev.Items.Count -gt 0) {
+            $cmbPrev.SelectedIndex = 0
+            $btnActivate.Enabled = $true
+        } else {
+            $btnActivate.Enabled = $false
+        }
+    }
+    &$loadPrevKrs
+
     $btnAdd = New-Object System.Windows.Forms.Button
     $btnAdd.Text = "Add"
     $btnAdd.Location = New-Object System.Drawing.Point(320, 158)
@@ -427,16 +591,30 @@ function Show-KeyResultsForm {
             $cat = if ($cmbCat.SelectedItem) { $cmbCat.SelectedItem.ToString() } else { "Other" }
             Add-KeyResult $cat $txtDesc.Text | Out-Null
             &$loadKrs
+            &$loadPrevKrs
             $txtDesc.Text = ""
         })
     $form.Controls.Add($btnAdd)
 
+    $btnActivate.Add_Click({
+        if ($cmbPrev.SelectedItem) {
+            if ($cmbPrev.SelectedItem.ToString() -match "\[Global ID: (\d+)\]") {
+                $gId = [int]$matches[1]
+                $map = Get-AllKeyResultsMap
+                $kr = $map[$gId]
+                Add-KeyResult $kr.Category $kr.Description $gId "Active" | Out-Null
+                &$loadKrs
+                &$loadPrevKrs
+            }
+        }
+    })
+
     $btnClose = New-Object System.Windows.Forms.Button
     $btnClose.Text = "Close / Start Day"
-    $btnClose.Location = New-Object System.Drawing.Point(150, 230)
+    $btnClose.Location = New-Object System.Drawing.Point(150, 290)
     $btnClose.Size = New-Object System.Drawing.Size(120, 30)
     $btnClose.Add_Click({
-            $todayKrs = Get-TodayKeyResults
+            $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
             if ($todayKrs.Count -eq 0) {
                 [System.Windows.Forms.MessageBox]::Show(
                     $form,
@@ -452,11 +630,12 @@ function Show-KeyResultsForm {
             }
         })
     $form.Controls.Add($btnClose)
+    $form.AcceptButton = $btnClose
 
     $form.Add_FormClosing({
             param($evtSender, $e)
             if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
-                $todayKrs = Get-TodayKeyResults
+                $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
                 if ($todayKrs.Count -eq 0) {
                     $confirm = [System.Windows.Forms.MessageBox]::Show(
                         $form,
@@ -530,11 +709,96 @@ function Show-QuickAddKRForm {
     return $form.Tag
 }
 
+function Show-StartSessionForm {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Start Your First Focus Session"
+    $form.Size = New-Object System.Drawing.Size(380, 240)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = "Welcome to Apoena! Select your starting Key Result and task:"
+    $lbl.Location = New-Object System.Drawing.Point(10, 10)
+    $lbl.Size = New-Object System.Drawing.Size(340, 35)
+    $form.Controls.Add($lbl)
+
+    $lblKr = New-Object System.Windows.Forms.Label
+    $lblKr.Text = "Key Result:"
+    $lblKr.Location = New-Object System.Drawing.Point(10, 60)
+    $lblKr.Size = New-Object System.Drawing.Size(80, 20)
+    $form.Controls.Add($lblKr)
+
+    $cmbKr = New-Object System.Windows.Forms.ComboBox
+    $cmbKr.Location = New-Object System.Drawing.Point(100, 58)
+    $cmbKr.Size = New-Object System.Drawing.Size(250, 20)
+    $cmbKr.DropDownStyle = 'DropDownList'
+    
+    $krs = Get-TodayKeyResults -IncludeCompleted $false
+    foreach ($kr in $krs) {
+        $cmbKr.Items.Add("[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+    }
+    $cmbKr.Items.Add("[None] Unplanned / Distraction") | Out-Null
+    $cmbKr.SelectedIndex = 0
+    $form.Controls.Add($cmbKr)
+
+    $lblPlan = New-Object System.Windows.Forms.Label
+    $lblPlan.Text = "Plan:"
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 95)
+    $lblPlan.Size = New-Object System.Drawing.Size(80, 20)
+    $form.Controls.Add($lblPlan)
+
+    $txtPlan = New-Object System.Windows.Forms.TextBox
+    $txtPlan.Location = New-Object System.Drawing.Point(100, 93)
+    $txtPlan.Size = New-Object System.Drawing.Size(250, 20)
+    $form.Controls.Add($txtPlan)
+
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = "Start Focus"
+    $btn.Location = New-Object System.Drawing.Point(130, 140)
+    $btn.Size = New-Object System.Drawing.Size(100, 30)
+    $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Controls.Add($btn)
+    $form.AcceptButton = $btn
+
+    $validate = {
+        $btn.Enabled = (-not [string]::IsNullOrWhiteSpace($txtPlan.Text))
+    }
+    $txtPlan.Add_TextChanged({ &$validate })
+    &$validate
+
+    $txtPlan.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            if ($btn.Enabled) { $btn.PerformClick() }
+        }
+    })
+
+    $form.ShowDialog() | Out-Null
+    
+    $selectedKrId = ""
+    $selectedGlobalId = ""
+    if ($cmbKr.SelectedItem -and $cmbKr.SelectedItem.ToString() -ne "[None] Unplanned / Distraction") {
+        if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+            $selectedKrId = $matches[1]
+            $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+            $matched = $todayKrs | Where-Object { $_.KeyResultID -eq $selectedKrId }
+            if ($matched) {
+                $selectedGlobalId = $matched.GlobalID
+            }
+        }
+    }
+
+    return @{ KeyResultID = $selectedKrId; GlobalID = $selectedGlobalId; Planned = $txtPlan.Text }
+}
+
 function Show-ResumedSessionForm {
     $formStart = [DateTime]::Now
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Welcome Back"
-    $form.Size = New-Object System.Drawing.Size(380, 200)
+    $form.Size = New-Object System.Drawing.Size(380, 320)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
@@ -548,21 +812,99 @@ function Show-ResumedSessionForm {
     $form.Controls.Add($lbl)
 
     $txtContext = New-Object System.Windows.Forms.TextBox
-    $txtContext.Location = New-Object System.Drawing.Point(10, 50)
+    $txtContext.Location = New-Object System.Drawing.Point(10, 45)
     $txtContext.Size = New-Object System.Drawing.Size(340, 20)
     $form.Controls.Add($txtContext)
 
+    $lblSep = New-Object System.Windows.Forms.Label
+    $lblSep.Text = "--- Plan Next Focus Session ---"
+    $lblSep.Location = New-Object System.Drawing.Point(10, 75)
+    $lblSep.Size = New-Object System.Drawing.Size(340, 20)
+    $lblSep.ForeColor = [System.Drawing.Color]::Gray
+    $lblSep.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    $form.Controls.Add($lblSep)
+
+    $lblKr = New-Object System.Windows.Forms.Label
+    $lblKr.Text = "Key Result to focus on:"
+    $lblKr.Location = New-Object System.Drawing.Point(10, 105)
+    $lblKr.Size = New-Object System.Drawing.Size(340, 15)
+    $form.Controls.Add($lblKr)
+
+    $cmbKr = New-Object System.Windows.Forms.ComboBox
+    $cmbKr.Location = New-Object System.Drawing.Point(10, 125)
+    $cmbKr.Size = New-Object System.Drawing.Size(340, 20)
+    $cmbKr.DropDownStyle = 'DropDownList'
+    
+    $krs = Get-TodayKeyResults -IncludeCompleted $false
+    foreach ($kr in $krs) {
+        $cmbKr.Items.Add("[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+    }
+    $cmbKr.Items.Add("[None] Unplanned / Distraction") | Out-Null
+    $cmbKr.SelectedIndex = 0
+    $form.Controls.Add($cmbKr)
+
+    $lblPlan = New-Object System.Windows.Forms.Label
+    $lblPlan.Text = "What do you plan to do?"
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 160)
+    $lblPlan.Size = New-Object System.Drawing.Size(340, 15)
+    $form.Controls.Add($lblPlan)
+
+    $txtPlan = New-Object System.Windows.Forms.TextBox
+    $txtPlan.Location = New-Object System.Drawing.Point(10, 180)
+    $txtPlan.Size = New-Object System.Drawing.Size(340, 20)
+    $form.Controls.Add($txtPlan)
+
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = "Resume"
-    $btn.Location = New-Object System.Drawing.Point(130, 100)
+    $btn.Location = New-Object System.Drawing.Point(130, 225)
     $btn.Size = New-Object System.Drawing.Size(100, 30)
     $btn.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Controls.Add($btn)
     $form.AcceptButton = $btn
 
+    $validate = {
+        $btn.Enabled = (-not [string]::IsNullOrWhiteSpace($txtContext.Text) -and -not [string]::IsNullOrWhiteSpace($txtPlan.Text))
+    }
+    $txtContext.Add_TextChanged({ &$validate })
+    $txtPlan.Add_TextChanged({ &$validate })
+    &$validate
+
+    $txtContext.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            $form.SelectNextControl($txtContext, $true, $true, $true, $true) | Out-Null
+        }
+    })
+    $txtPlan.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            if ($btn.Enabled) { $btn.PerformClick() }
+        }
+    })
+
     $form.ShowDialog() | Out-Null
     $logDur = ([DateTime]::Now - $formStart).TotalSeconds
-    return @{ Context = $txtContext.Text; LogDuration = $logDur }
+
+    $selectedKrId = ""
+    $selectedGlobalId = ""
+    if ($cmbKr.SelectedItem -and $cmbKr.SelectedItem.ToString() -ne "[None] Unplanned / Distraction") {
+        if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+            $selectedKrId = $matches[1]
+            $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+            $matched = $todayKrs | Where-Object { $_.KeyResultID -eq $selectedKrId }
+            if ($matched) {
+                $selectedGlobalId = $matched.GlobalID
+            }
+        }
+    }
+
+    return @{
+        Context       = $txtContext.Text
+        LogDuration   = $logDur
+        KeyResultID   = $selectedKrId
+        GlobalID      = $selectedGlobalId
+        Planned       = $txtPlan.Text
+    }
 }
 
 function Show-FocusSessionForm {
@@ -570,7 +912,7 @@ function Show-FocusSessionForm {
     $form = New-Object System.Windows.Forms.Form
     $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
     $form.Text = "Focus Session Complete! ($focusSessionTimeStr)"
-    $form.Size = New-Object System.Drawing.Size(430, 335)
+    $form.Size = New-Object System.Drawing.Size(430, 385)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
     $form.FormBorderStyle = "FixedDialog"
@@ -578,6 +920,7 @@ function Show-FocusSessionForm {
     $form.MinimizeBox = $false
     $form.ControlBox = $false
 
+    # 1. Which Key Result did you focus on?
     $lblKr = New-Object System.Windows.Forms.Label
     $lblKr.Text = "Which Key Result did you focus on?"
     $lblKr.Location = New-Object System.Drawing.Point(10, 10)
@@ -591,9 +934,34 @@ function Show-FocusSessionForm {
     
     $loadCmbKrs = {
         $cmbKr.Items.Clear()
-        $krs = Get-TodayKeyResults
+        $krs = Get-TodayKeyResults -IncludeCompleted $false
+        
+        # Ensure the current active KR of this finished session is included
+        if ($global:currentKrId) {
+            $exists = $false
+            foreach ($kr in $krs) {
+                if ($kr.KeyResultID -eq $global:currentKrId) { $exists = $true; break }
+            }
+            if (-not $exists) {
+                $matchedToday = Get-TodayKeyResults -IncludeCompleted $true | Where-Object { $_.KeyResultID -eq $global:currentKrId }
+                if ($matchedToday) {
+                    $krs += $matchedToday
+                }
+            }
+        }
+
         foreach ($kr in $krs) {
-            $cmbKr.Items.Add("[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+            $statusPrefix = if ($kr.Status -eq 'Done') { "[Done] " } else { "" }
+            $cmbKr.Items.Add("$statusPrefix[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+        }
+        
+        if ($global:currentKrId) {
+            for ($i = 0; $i -lt $cmbKr.Items.Count; $i++) {
+                if ($cmbKr.Items[$i] -match "\[$($global:currentKrId)\]") {
+                    $cmbKr.SelectedIndex = $i
+                    break
+                }
+            }
         }
     }
     &$loadCmbKrs
@@ -617,12 +985,21 @@ function Show-FocusSessionForm {
         })
     $form.Controls.Add($btnAddKr)
 
+    # 2. Checkboxes (Unplanned & Mark completed)
     $chkUnplanned = New-Object System.Windows.Forms.CheckBox
     $chkUnplanned.Text = "Unplanned / Distracted"
     $chkUnplanned.Location = New-Object System.Drawing.Point(10, 55)
-    $chkUnplanned.Size = New-Object System.Drawing.Size(200, 20)
+    $chkUnplanned.Size = New-Object System.Drawing.Size(180, 20)
     $form.Controls.Add($chkUnplanned)
 
+    $chkMarkDone = New-Object System.Windows.Forms.CheckBox
+    $chkMarkDone.Text = "Mark Key Result as completed"
+    $chkMarkDone.Location = New-Object System.Drawing.Point(200, 55)
+    $chkMarkDone.Size = New-Object System.Drawing.Size(220, 20)
+    $chkMarkDone.Enabled = $false
+    $form.Controls.Add($chkMarkDone)
+
+    # 3. What did you accomplish?
     $lblAcc = New-Object System.Windows.Forms.Label
     $lblAcc.Text = "What did you accomplish?"
     $lblAcc.Location = New-Object System.Drawing.Point(10, 85)
@@ -633,42 +1010,95 @@ function Show-FocusSessionForm {
     $txtAcc.Location = New-Object System.Drawing.Point(10, 105)
     $txtAcc.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtAcc)
+
+    # 4. Plan to focus on next Key Result
+    $lblNextKr = New-Object System.Windows.Forms.Label
+    $lblNextKr.Text = "Plan to focus on next Key Result:"
+    $lblNextKr.Location = New-Object System.Drawing.Point(10, 135)
+    $lblNextKr.AutoSize = $true
+    $form.Controls.Add($lblNextKr)
+
+    $cmbNextKr = New-Object System.Windows.Forms.ComboBox
+    $cmbNextKr.Location = New-Object System.Drawing.Point(10, 155)
+    $cmbNextKr.Size = New-Object System.Drawing.Size(390, 20)
+    $cmbNextKr.DropDownStyle = 'DropDownList'
     
+    $loadNextCmbKrs = {
+        $cmbNextKr.Items.Clear()
+        
+        $excludeKrId = ""
+        if ($chkMarkDone.Checked -and $cmbKr.SelectedIndex -ge 0) {
+            if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+                $excludeKrId = $matches[1]
+            }
+        }
+
+        $krs = Get-TodayKeyResults -IncludeCompleted $false
+        foreach ($kr in $krs) {
+            if ($excludeKrId -and $kr.KeyResultID -eq $excludeKrId) { continue }
+            $cmbNextKr.Items.Add("[$($kr.KeyResultID)] $($kr.Description)") | Out-Null
+        }
+        $cmbNextKr.Items.Add("[None] Unplanned / Distraction") | Out-Null
+        
+        # Default selection
+        if ($global:currentKrId -and $global:currentKrId -ne $excludeKrId) {
+            $matchedIdx = -1
+            for ($i = 0; $i -lt $cmbNextKr.Items.Count; $i++) {
+                if ($cmbNextKr.Items[$i] -match "\[$($global:currentKrId)\]") {
+                    $matchedIdx = $i
+                    break
+                }
+            }
+            if ($matchedIdx -ge 0) {
+                $cmbNextKr.SelectedIndex = $matchedIdx
+                return
+            }
+        }
+        if ($cmbNextKr.Items.Count -gt 0) {
+            $cmbNextKr.SelectedIndex = 0
+        }
+    }
+    &$loadNextCmbKrs
+    $form.Controls.Add($cmbNextKr)
+
+    # 5. What do you plan to do next?
     $lblPlan = New-Object System.Windows.Forms.Label
     $lblPlan.Text = "What do you plan to do next?"
-    $lblPlan.Location = New-Object System.Drawing.Point(10, 135)
+    $lblPlan.Location = New-Object System.Drawing.Point(10, 185)
     $lblPlan.AutoSize = $true
     $form.Controls.Add($lblPlan)
     
     $txtPlan = New-Object System.Windows.Forms.TextBox
     $txtPlan.Name = "txtPlan"
-    $txtPlan.Location = New-Object System.Drawing.Point(10, 155)
+    $txtPlan.Location = New-Object System.Drawing.Point(10, 205)
     $txtPlan.Size = New-Object System.Drawing.Size(390, 20)
     $form.Controls.Add($txtPlan)
     
+    # 6. Continue previous task
     $chkCont = New-Object System.Windows.Forms.CheckBox
     $chkCont.Text = "Continue previous task"
-    $chkCont.Location = New-Object System.Drawing.Point(10, 185)
+    $chkCont.Location = New-Object System.Drawing.Point(10, 235)
     $chkCont.Size = New-Object System.Drawing.Size(200, 20)
     $form.Controls.Add($chkCont)
-    
+
+    # Buttons
     $btnEye = New-Object System.Windows.Forms.Button
     $btnEye.Text = "Eye Rest (20s)"
-    $btnEye.Location = New-Object System.Drawing.Point(20, 235)
+    $btnEye.Location = New-Object System.Drawing.Point(20, 285)
     $btnEye.Size = New-Object System.Drawing.Size(120, 40)
     $btnEye.Enabled = $false
     $form.Controls.Add($btnEye)
     
     $btnBreak = New-Object System.Windows.Forms.Button
     $btnBreak.Text = "Quick Break"
-    $btnBreak.Location = New-Object System.Drawing.Point(145, 235)
+    $btnBreak.Location = New-Object System.Drawing.Point(145, 285)
     $btnBreak.Size = New-Object System.Drawing.Size(120, 40)
     $btnBreak.Enabled = $false
     $form.Controls.Add($btnBreak)
 
     $btnPause = New-Object System.Windows.Forms.Button
     $btnPause.Text = "Pause / Away"
-    $btnPause.Location = New-Object System.Drawing.Point(270, 235)
+    $btnPause.Location = New-Object System.Drawing.Point(270, 285)
     $btnPause.Size = New-Object System.Drawing.Size(120, 40)
     $btnPause.Enabled = $false
     $form.Controls.Add($btnPause)
@@ -682,6 +1112,13 @@ function Show-FocusSessionForm {
         $btnEye.Enabled   = $valid
         $btnBreak.Enabled = $valid
         $btnPause.Enabled = $valid
+        
+        if (-not $chkUnplanned.Checked -and $cmbKr.SelectedIndex -ge 0) {
+            $chkMarkDone.Enabled = $true
+        } else {
+            $chkMarkDone.Enabled = $false
+            $chkMarkDone.Checked = $false
+        }
     }
 
     $chkUnplanned.Add_CheckedChanged({
@@ -693,7 +1130,59 @@ function Show-FocusSessionForm {
         &$validateInputs
     })
 
-    $cmbKr.Add_SelectedIndexChanged({ &$validateInputs })
+    $cmbKr.Add_SelectedIndexChanged({
+        &$validateInputs
+        
+        # Reload next KR list if completed KR changed
+        $prevSelectedText = if ($cmbNextKr.SelectedItem) { $cmbNextKr.SelectedItem.ToString() } else { "" }
+        &$loadNextCmbKrs
+        if ($prevSelectedText) {
+            $matchedIdx = -1
+            for ($i = 0; $i -lt $cmbNextKr.Items.Count; $i++) {
+                if ($cmbNextKr.Items[$i].ToString() -eq $prevSelectedText) {
+                    $matchedIdx = $i
+                    break
+                }
+            }
+            if ($matchedIdx -ge 0) {
+                $cmbNextKr.SelectedIndex = $matchedIdx
+            } else {
+                if ($cmbNextKr.Items.Count -gt 0) {
+                    $cmbNextKr.SelectedIndex = 0
+                }
+            }
+        }
+    })
+
+    $chkMarkDone.Add_CheckedChanged({
+        if ($this.Checked) {
+            $chkCont.Checked = $false
+            $chkCont.Enabled = $false
+        } else {
+            $chkCont.Enabled = $true
+        }
+
+        $prevSelectedText = if ($cmbNextKr.SelectedItem) { $cmbNextKr.SelectedItem.ToString() } else { "" }
+        &$loadNextCmbKrs
+        if ($prevSelectedText) {
+            $matchedIdx = -1
+            for ($i = 0; $i -lt $cmbNextKr.Items.Count; $i++) {
+                if ($cmbNextKr.Items[$i].ToString() -eq $prevSelectedText) {
+                    $matchedIdx = $i
+                    break
+                }
+            }
+            if ($matchedIdx -ge 0) {
+                $cmbNextKr.SelectedIndex = $matchedIdx
+            } else {
+                if ($cmbNextKr.Items.Count -gt 0) {
+                    $cmbNextKr.SelectedIndex = 0
+                }
+            }
+        }
+        &$validateInputs
+    })
+
     $txtAcc.Add_TextChanged({ &$validateInputs })
     $txtPlan.Add_TextChanged({ &$validateInputs })
 
@@ -701,6 +1190,12 @@ function Show-FocusSessionForm {
         if ($_.KeyCode -eq 'Enter') {
             $_.SuppressKeyPress = $true
             $form.SelectNextControl($txtAcc, $true, $true, $true, $true) | Out-Null
+        }
+    })
+    $cmbNextKr.Add_KeyDown({
+        if ($_.KeyCode -eq 'Enter') {
+            $_.SuppressKeyPress = $true
+            $txtPlan.Focus() | Out-Null
         }
     })
     $txtPlan.Add_KeyDown({
@@ -716,6 +1211,20 @@ function Show-FocusSessionForm {
             if ($this.Checked) {
                 $targetTxt.Enabled = $false
                 $targetTxt.Text = "Continuing previous task"
+                if ($cmbKr.SelectedIndex -ge 0) {
+                    $krIdToMatch = ""
+                    if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+                        $krIdToMatch = $matches[1]
+                    }
+                    if ($krIdToMatch) {
+                        for ($i = 0; $i -lt $cmbNextKr.Items.Count; $i++) {
+                            if ($cmbNextKr.Items[$i] -match "\[$krIdToMatch\]") {
+                                $cmbNextKr.SelectedIndex = $i
+                                break
+                            }
+                        }
+                    }
+                }
             }
             else {
                 $targetTxt.Enabled = $true
@@ -751,14 +1260,13 @@ function Show-FocusSessionForm {
                         [int](($screen.Width  - $form.Width)  / 2),
                         [int](($screen.Height - $form.Height) / 2)
                     )
-                    # Minimize then restore — reliable way to steal foreground focus on Windows
+                    # Minimize then restore
                     $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
                     $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
                     $form.TopMost = $true
                     $form.Activate()
-                    # Alert beep
                     [System.Media.SystemSounds]::Beep.Play()
-                    # Flash title bar and taskbar button 5 times
+                    
                     $fwi = New-Object Win32+FLASHWINFO
                     $fwi.cbSize    = [System.Runtime.InteropServices.Marshal]::SizeOf($fwi)
                     $fwi.hwnd      = $form.Handle
@@ -776,7 +1284,6 @@ function Show-FocusSessionForm {
             $presenceTimer.Dispose()
         })
 
-    # --- Action button handlers (set sentinel, stop presence timer, then close) ---
     $btnEye.Add_Click({
             $global:isValidSubmit = $true
             $presenceTimer.Stop()
@@ -803,19 +1310,42 @@ function Show-FocusSessionForm {
     elseif ($result -eq [System.Windows.Forms.DialogResult]::Abort) { $action = 'Pause' }
 
     $selectedKrId = ""
+    $selectedGlobalId = ""
     if (-not $chkUnplanned.Checked -and $cmbKr.SelectedItem) {
         if ($cmbKr.SelectedItem.ToString() -match "\[(.*?)\]") {
             $selectedKrId = $matches[1]
+            $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+            $matched = $todayKrs | Where-Object { $_.KeyResultID -eq $selectedKrId }
+            if ($matched) {
+                $selectedGlobalId = $matched.GlobalID
+            }
+        }
+    }
+
+    $nextKrId = ""
+    $nextGlobalId = ""
+    if ($cmbNextKr.SelectedItem -and $cmbNextKr.SelectedItem.ToString() -ne "[None] Unplanned / Distraction") {
+        if ($cmbNextKr.SelectedItem.ToString() -match "\[(.*?)\]") {
+            $nextKrId = $matches[1]
+            $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+            $matched = $todayKrs | Where-Object { $_.KeyResultID -eq $nextKrId }
+            if ($matched) {
+                $nextGlobalId = $matched.GlobalID
+            }
         }
     }
 
     return @{
-        Action        = $action
-        Accomplished  = $txtAcc.Text
-        Planned       = $txtPlan.Text
-        LogDuration   = $logDur
-        KeyResultID   = $selectedKrId
-        IsDistraction = $chkUnplanned.Checked
+        Action          = $action
+        Accomplished    = $txtAcc.Text
+        Planned         = $txtPlan.Text
+        LogDuration     = $logDur
+        KeyResultID     = $selectedKrId
+        GlobalID        = $selectedGlobalId
+        IsDistraction   = $chkUnplanned.Checked
+        MarkDone        = $chkMarkDone.Checked
+        NextKeyResultID = $nextKrId
+        NextGlobalID    = $nextGlobalId
     }
 }
 
@@ -943,29 +1473,41 @@ $trayIcon.Visible = $true
 # --- Main Loop ---
 Write-Log "System" "Started" 0 "" "" "" 0 (Get-ScheduleContext) ""
 
+$global:currentKrId = ""
+$global:currentGlobalId = ""
+$global:lastPlannedTask = ""
+
 if ($isSameDayRestart) {
     $resumed = Show-ResumedSessionForm
-    Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext) ""
+    $global:currentKrId = $resumed.KeyResultID
+    $global:currentGlobalId = $resumed.GlobalID
+    $global:lastPlannedTask = $resumed.Planned
+    Write-Log "System" "Resumed" 0 "" "" $resumed.Context $resumed.LogDuration (Get-ScheduleContext) $resumed.KeyResultID $null $false $resumed.GlobalID
     $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
     [System.Windows.Forms.MessageBox]::Show("Your next focus session has started! It will last for $focusSessionTimeStr.", "Focus Session Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
 }
 else {
+    $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+    if ($todayKrs.Count -eq 0) {
+        Show-KeyResultsForm
+        $todayKrs = Get-TodayKeyResults -IncludeCompleted $true
+        if ($todayKrs.Count -eq 0) {
+            Write-Log "System" "Exit" 0 "" "" "Closed planning form on startup without key results" 0 (Get-ScheduleContext) ""
+            if ($trayIcon) {
+                $trayIcon.Visible = $false
+                $trayIcon.Dispose()
+            }
+            [System.Environment]::Exit(0)
+        }
+    }
+
+    $start = Show-StartSessionForm
+    $global:currentKrId = $start.KeyResultID
+    $global:currentGlobalId = $start.GlobalID
+    $global:lastPlannedTask = $start.Planned
+
     $focusSessionTimeStr = Get-FormattedDuration $focusSessionDuration
     [System.Windows.Forms.MessageBox]::Show("Welcome to Apoena! Have a great day at work.`n`nI'll monitor your routine and remind you to take breaks. Your first focus session has started and will last for $focusSessionTimeStr.", "Apoena Started", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
-}
-
-$todayKrs = Get-TodayKeyResults
-if ($todayKrs.Count -eq 0) {
-    Show-KeyResultsForm
-    $todayKrs = Get-TodayKeyResults
-    if ($todayKrs.Count -eq 0) {
-        Write-Log "System" "Exit" 0 "" "" "Closed planning form on startup without key results" 0 (Get-ScheduleContext) ""
-        if ($trayIcon) {
-            $trayIcon.Visible = $false
-            $trayIcon.Dispose()
-        }
-        [System.Environment]::Exit(0)
-    }
 }
 
 while ($true) {
@@ -976,7 +1518,23 @@ while ($true) {
     $remainingSecs = [math]::Max(0, $focusSessionDuration - $elapsedSecs)
     $ts = [TimeSpan]::FromSeconds($remainingSecs)
     $timeStr = if ($ts.TotalHours -ge 1) { $ts.ToString('hh\:mm\:ss') } else { $ts.ToString('mm\:ss') }
-    $trayIcon.Text = "Apoena - $timeStr remaining"
+    
+    $krInfo = ""
+    if ($global:currentKrId) {
+        $map = Get-AllKeyResultsMap
+        $kr = $map[$global:currentGlobalId]
+        if ($kr) {
+            $krInfo = "`nFocus: [$($global:currentKrId)] $($kr.Description)"
+        }
+    } else {
+        $krInfo = "`nFocus: Unplanned / Distraction"
+    }
+
+    $tooltipText = "Apoena - $timeStr remaining$krInfo"
+    if ($tooltipText.Length -gt 63) {
+        $tooltipText = $tooltipText.Substring(0, 60) + "..."
+    }
+    $trayIcon.Text = $tooltipText
 
     $lii = New-Object Win32+LASTINPUTINFO
     $lii.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($lii)
@@ -984,7 +1542,7 @@ while ($true) {
     # 1. Check for manual tray interruption
     if ($global:manualInterrupt) {
         $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
-        Write-Log "Focus Session" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) ""
+        Write-Log "Focus Session" "Partial (Manual Pause)" $workedSecs "Interrupted" "Manual Pause" "" 0 (Get-ScheduleContext) $global:currentKrId $null $false $global:currentGlobalId
         
         $pauseStart = [DateTime]::Now
         Invoke-EnforcedBreak -durationSecs $pauseMinDuration -context "Pause"
@@ -1006,7 +1564,7 @@ while ($true) {
             $awayStart = [DateTime]::Now.AddSeconds(-$idleSeconds)
             $workedSecs = ($awayStart - $focusSessionStart).TotalSeconds
             
-            Write-Log "Focus Session" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext) ""
+            Write-Log "Focus Session" "Partial (Idle Detected)" $workedSecs "Auto-detected idle" "" "" 0 (Get-ScheduleContext) $global:currentKrId $null $false $global:currentGlobalId
             [System.Windows.Forms.MessageBox]::Show("You've been idle for over 15 minutes. Monitoring paused until you click OK.", "Idle Detected", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
             
             $actualAwaySecs = ([DateTime]::Now - $awayStart).TotalSeconds
@@ -1023,8 +1581,19 @@ while ($true) {
     if (([DateTime]::Now - $lastBreak).TotalSeconds -ge $focusSessionDuration) {
         $workedSecs = ([DateTime]::Now - $focusSessionStart).TotalSeconds
         $result = Show-FocusSessionForm
+        Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID $null $result.IsDistraction $result.GlobalID
+        
+        if ($result.MarkDone -and $result.GlobalID) {
+            $map = Get-AllKeyResultsMap
+            $kr = $map[$result.GlobalID]
+            if ($kr) {
+                Add-KeyResult $kr.Category $kr.Description $result.GlobalID "Done" | Out-Null
+            }
+        }
+
+        $global:currentKrId = $result.NextKeyResultID
+        $global:currentGlobalId = $result.NextGlobalID
         $global:lastPlannedTask = $result.Planned
-        Write-Log "Focus Session" "Complete" $workedSecs $result.Accomplished $result.Planned "" $result.LogDuration (Get-ScheduleContext) $result.KeyResultID $null $result.IsDistraction
         
         if ($result.Action -eq 'Pause') {
             $pauseStart = [DateTime]::Now
