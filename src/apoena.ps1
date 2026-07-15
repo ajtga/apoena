@@ -15,6 +15,19 @@ public class Win32 {
         public uint cbSize;
         public uint dwTime;
     }
+
+    [DllImport("user32.dll")]
+    public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FLASHWINFO {
+        public uint  cbSize;
+        public IntPtr hwnd;
+        public uint  dwFlags;
+        public uint  uCount;
+        public uint  dwTimeout;
+    }
+    public const uint FLASHW_ALL   = 3;   // caption + taskbar button
+    public const uint FLASHW_TIMER = 4;   // flash continuously for uCount times
 }
 "@
 
@@ -593,19 +606,65 @@ function Show-FocusSessionForm {
             }
         })
 
-    # --- Action button handlers (set sentinel, then close) ---
+    # --- Active Presence Detection (fires every 2s; nudges user if actively working in another window) ---
+    $presenceTimer = New-Object System.Windows.Forms.Timer
+    $presenceTimer.Interval = 2000
+    $presenceTimer.Add_Tick({
+            if ($form.ContainsFocus) { return }
+
+            $lii = New-Object Win32+LASTINPUTINFO
+            $lii.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($lii)
+            if ([Win32]::GetLastInputInfo([ref]$lii)) {
+                $idleMs = [Environment]::TickCount - $lii.dwTime
+                # Only interrupt if the user has been active (mouse/keyboard) in the last 2.5 seconds
+                if ($idleMs -lt 2500) {
+                    # Recenter on primary screen
+                    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+                    $form.Location = New-Object System.Drawing.Point(
+                        [int](($screen.Width  - $form.Width)  / 2),
+                        [int](($screen.Height - $form.Height) / 2)
+                    )
+                    # Minimize then restore — reliable way to steal foreground focus on Windows
+                    $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
+                    $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+                    $form.TopMost = $true
+                    $form.Activate()
+                    # Alert beep
+                    [System.Media.SystemSounds]::Beep.Play()
+                    # Flash title bar and taskbar button 5 times
+                    $fwi = New-Object Win32+FLASHWINFO
+                    $fwi.cbSize    = [System.Runtime.InteropServices.Marshal]::SizeOf($fwi)
+                    $fwi.hwnd      = $form.Handle
+                    $fwi.dwFlags   = [Win32]::FLASHW_ALL -bor [Win32]::FLASHW_TIMER
+                    $fwi.uCount    = 5
+                    $fwi.dwTimeout = 0
+                    [Win32]::FlashWindowEx([ref]$fwi) | Out-Null
+                }
+            }
+        })
+    $presenceTimer.Start()
+
+    $form.Add_FormClosed({
+            $presenceTimer.Stop()
+            $presenceTimer.Dispose()
+        })
+
+    # --- Action button handlers (set sentinel, stop presence timer, then close) ---
     $btnEye.Add_Click({
             $global:isValidSubmit = $true
+            $presenceTimer.Stop()
             $form.DialogResult = [System.Windows.Forms.DialogResult]::Yes
         })
 
     $btnBreak.Add_Click({
             $global:isValidSubmit = $true
+            $presenceTimer.Stop()
             $form.DialogResult = [System.Windows.Forms.DialogResult]::No
         })
 
     $btnPause.Add_Click({
             $global:isValidSubmit = $true
+            $presenceTimer.Stop()
             $form.DialogResult = [System.Windows.Forms.DialogResult]::Abort
         })
 
